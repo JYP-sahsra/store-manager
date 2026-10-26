@@ -24,6 +24,7 @@ import {
   overtimeCharge,
   overtimeHours,
   drinkCounts,
+  splitBill,
   CATEGORY_LABELS,
   METHOD_LABELS,
   HOURS_KEY,
@@ -56,7 +57,10 @@ const ui = {
   notice: loaded.warning,
   // 매출 캘린더: data = { source: 'server' | 'local', list }, selected = 펼친 날짜
   calendar: { month: monthOf(new Date()), data: null, loading: false, selected: null },
-  basicOpen: !state.pin, // 관리 탭 기본 정보 펼침(PIN이 없을 때만 처음부터 펼친다)
+  // 접고 펴는 영역의 펼침 상태(다시 그려도 유지). 기본 정보는 PIN이 없을 때만 처음부터 펼친다.
+  folds: { basic: !state.pin, rooms: false, items: false, calc: false },
+  // 간이 계산기(매출에 기록하지 않음): 품목별 수량, 결제수단, 더치페이 인원
+  calc: { counts: {}, method: 'cash', people: 1 },
   appVersion: '', // 실행 중인 앱 버전(service worker 캐시 이름)
   updateReady: false, // 새 버전이 준비됐지만 입력 중이라 적용을 미뤘다
   busy: false,
@@ -175,7 +179,57 @@ function roomsView() {
   if (ui.roomId && state.sessions[ui.roomId]) return roomDetailView(ui.roomId);
   ui.roomId = null;
   return `${staleWarning()}<div class="room-list">${state.settings.rooms.map(roomCard).join('')}</div>
-    ${state.settings.items.length ? '' : '<p class="empty">관리 탭에서 판매 품목과 룸 요금을 먼저 입력해 주세요.</p>'}`;
+    ${state.settings.items.length ? calculatorSection() : '<p class="empty">관리 탭에서 판매 품목과 룸 요금을 먼저 입력해 주세요.</p>'}`;
+}
+
+// 간이 계산기: 판매 품목 수량을 세어 현금/카드 금액과 더치페이를 계산한다. 매출·룸에는 기록하지 않는다.
+function calculatorSection() {
+  const c = ui.calc;
+  const items = state.settings.items.filter((i) => i.active);
+  const base = items.reduce((sum, i) => sum + i.price * (c.counts[i.id] || 0), 0);
+  const pay = calcPayment(base, c.method, 0);
+  const split = splitBill(pay.amount, c.people);
+  const count = Object.values(c.counts).reduce((a, n) => a + n, 0);
+  const row = (i) => {
+    const qty = c.counts[i.id] || 0;
+    return `<div class="calc-row ${qty ? 'picked' : ''}">
+      <div class="counter-label"><span>${esc(i.name)}</span><small>${won(i.price)}${i.category === 'service' ? ' · 1시간' : ''}</small></div>
+      <div class="counter">
+        <button class="step" data-action="calc-count" data-key="${esc(i.id)}" data-delta="-1" ${qty ? '' : 'disabled'} aria-label="${esc(i.name)} 빼기">−</button>
+        <span class="qty">${qty}</span>
+        <button class="step" data-action="calc-count" data-key="${esc(i.id)}" data-delta="1" aria-label="${esc(i.name)} 더하기">+</button>
+      </div>
+    </div>`;
+  };
+  const group = (cat) => {
+    const list = items.filter((i) => i.category === cat);
+    return list.length ? `<h4>${CATEGORY_LABELS[cat]}</h4>${list.map(row).join('')}` : '';
+  };
+  return `<details class="card fold calc" data-fold="calc" ${ui.folds.calc ? 'open' : ''}>
+    <summary><h3>간이 계산기</h3><span class="muted">${count ? `${count}개 · ${won(pay.amount)}` : '매출에 기록되지 않는 계산용'}</span></summary>
+    ${group('liquor')}
+    ${group('service')}
+    <div class="segmented big calc-method" role="radiogroup" aria-label="계산기 결제수단">
+      <button role="radio" aria-checked="${c.method === 'cash'}" data-action="calc-method" data-method="cash">현금<small>판매액 그대로</small></button>
+      <button role="radio" aria-checked="${c.method === 'card'}" data-action="calc-method" data-method="card">카드<small>+${CARD_SURCHARGE_PERCENT}% 가산</small></button>
+    </div>
+    <dl class="sum">
+      <div><dt>판매액</dt><dd>${won(pay.base)}</dd></div>
+      ${pay.surcharge ? `<div><dt>카드 가산 ${CARD_SURCHARGE_PERCENT}%</dt><dd>+${won(pay.surcharge)}</dd></div>` : ''}
+      <div class="grand"><dt>결제 금액</dt><dd>${won(pay.amount)}</dd></div>
+    </dl>
+    <div class="counter-row split-row">
+      <div class="counter-label"><span>더치페이 ${split.people}명</span>
+        <small>${split.people > 1 ? `1인 ${won(split.perPerson)} (100원 단위 올림${split.extra ? ` · 합계 +${won(split.extra)}` : ''})` : '인원을 늘리면 1인 금액을 계산합니다'}</small></div>
+      <div class="counter">
+        <button class="step" data-action="calc-people" data-delta="-1" ${split.people <= 1 ? 'disabled' : ''} aria-label="더치페이 인원 줄이기">−</button>
+        <span class="qty">${split.people}</span>
+        <button class="step" data-action="calc-people" data-delta="1" aria-label="더치페이 인원 늘리기">+</button>
+      </div>
+    </div>
+    ${split.people > 1 ? `<div class="big-total split-total"><span>1인당</span><b>${won(split.perPerson)}</b></div>` : ''}
+    <button class="btn block" data-action="calc-reset">계산기 비우기</button>
+  </details>`;
 }
 
 // 상태별 타일: 비어 있음(입장 버튼) / 이용 중·미결제(강조) / 이용 중·결제 완료
@@ -574,22 +628,22 @@ function settingsView() {
     ? `서버 연결 정보 있음${state.settingsDirty ? ' · 서버에 아직 반영되지 않은 변경이 있습니다' : ''}`
     : '서버 미설정 (js/config.js) · 휴대폰에만 저장됩니다';
   return `
-    <details class="card fold" data-fold="basic" ${ui.basicOpen ? 'open' : ''}>
+    <details class="card fold" data-fold="basic" ${ui.folds.basic ? 'open' : ''}>
       <summary><h3>기본 정보</h3><span class="muted">${esc(d.storeName || '매장명 없음')} · ${esc(d.managerName || '관리자 미입력')} · PIN ${d.pin ? '입력됨' : '없음'}</span></summary>
       <label class="field"><span>매장명</span>${input('storeName', d.storeName, 'autocomplete="off"')}</label>
       <label class="field"><span>관리자 이름 (마감·설정 변경 기록용)</span>${input('managerName', d.managerName, 'autocomplete="off"')}</label>
       <label class="field"><span>매장 PIN (서버 저장용)</span>${input('pin', d.pin, 'type="password" autocomplete="off"')}</label>
       <label class="field"><span>영업일 기준 시각 (0~23시, 이 시각 이전에 시작한 영업은 전날 매출. 기본 12)</span>${input('dayCutoffHour', d.dayCutoffHour, 'inputmode="numeric"')}</label>
     </details>
-    <section class="card">
-      <h3>룸 요금</h3>
+    <details class="card fold" data-fold="rooms" ${ui.folds.rooms ? 'open' : ''}>
+      <summary><h3>룸 요금</h3><span class="muted">${d.rooms.map((r) => `${esc(r.name)} ${won(parseWon(r.hourlyRate))}`).join(' · ')}</span></summary>
       ${d.rooms.map((r, i) => `<div class="grid-2">
         <label class="field"><span>룸 이름</span>${input(`rooms.${i}.name`, r.name)}</label>
         <label class="field"><span>시간당 요금(원)</span>${input(`rooms.${i}.hourlyRate`, r.hourlyRate, 'inputmode="numeric"')}</label>
       </div>`).join('')}
-    </section>
-    <section class="card">
-      <h3>판매 품목</h3>
+    </details>
+    <details class="card fold" data-fold="items" ${ui.folds.items ? 'open' : ''}>
+      <summary><h3>판매 품목</h3><span class="muted">식음료 ${d.items.filter((i) => i.category === 'liquor').length}개 · 기타 서비스 ${d.items.filter((i) => i.category === 'service').length}개</span></summary>
       <p class="muted">식음료는 수량으로 세고, 기타 서비스는 1명·1시간 가격을 입력합니다(시간제).</p>
       ${d.items.length ? '' : '<p class="muted">품목이 없습니다.</p>'}
       ${d.items.map((it, i) => `<div class="item-edit">
@@ -604,7 +658,7 @@ function settingsView() {
         <button class="btn small danger" data-action="delete-item" data-index="${i}">삭제</button>
       </div>`).join('')}
       <button class="btn block" data-action="add-item">+ 품목 추가</button>
-    </section>
+    </details>
     <p class="muted">${esc(server)}${s.updatedAt ? `<br>마지막 변경 ${fmtDateTime(s.updatedAt)}${s.updatedBy ? ` · ${esc(s.updatedBy)}` : ''}` : ''}</p>
     <div class="actions">
       <button class="btn" data-action="reset-draft">되돌리기</button>
@@ -655,6 +709,23 @@ const actions = {
   },
   category: (el) => {
     ui.category = el.dataset.category;
+    render();
+  },
+  'calc-count': (el) => {
+    const n = (ui.calc.counts[el.dataset.key] || 0) + Number(el.dataset.delta);
+    ui.calc.counts[el.dataset.key] = Math.max(0, n);
+    render();
+  },
+  'calc-method': (el) => {
+    ui.calc.method = el.dataset.method;
+    render();
+  },
+  'calc-people': (el) => {
+    ui.calc.people = Math.max(1, ui.calc.people + Number(el.dataset.delta));
+    render();
+  },
+  'calc-reset': () => {
+    ui.calc = { counts: {}, method: 'cash', people: 1 };
     render();
   },
   guests: (el) => updateSession((s) => changeGuests(s, Number(el.dataset.delta))),
@@ -1040,7 +1111,8 @@ app.addEventListener('change', (e) => {
 app.addEventListener(
   'toggle',
   (e) => {
-    if (e.target.dataset?.fold === 'basic') ui.basicOpen = e.target.open;
+    const key = e.target.dataset?.fold;
+    if (key && key in ui.folds) ui.folds[key] = e.target.open;
   },
   true,
 );

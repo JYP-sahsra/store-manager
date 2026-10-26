@@ -214,6 +214,14 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .room-money small { display: block; font-size: .75rem; font-weight: 700; }
 @media (prefers-color-scheme: dark) { .room-money div { background: rgb(0 0 0 / .25); } }
 .cancel-note { margin: 8px 0 2px; font-size: .85rem; }
+
+.calc { margin-top: 16px; }
+.calc h4 { margin: 12px 0 2px; }
+.calc-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+.calc-row.picked .counter-label span { color: var(--accent); }
+.calc-method { margin-top: 14px; }
+.split-row { margin-top: 6px; }
+.split-total b { color: var(--accent); }
 .badge.due { background: var(--accent); color: var(--primary-text); }
 .badge.ok { background: transparent; color: var(--ok); border: 1px solid var(--ok); }
 

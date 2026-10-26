@@ -27,6 +27,7 @@ import {
   overtimeCharge,
   overtimeHours,
   drinkCounts,
+  splitBill,
 } from '../js/calc.js';
 
 const room = { id: 'room1', name: '1번 룸', hourlyRate: 30000 };
@@ -194,6 +195,13 @@ test('식음료 나간 수량(결제 여부와 무관, 많은 순)', () => {
   s = changeCount(s, 'beer', 1);
   const list = [...items, { id: 'soju', name: '소주', category: 'liquor', price: 6000 }];
   assert.deepEqual(drinkCounts(changeCount(s, 'soju', 1), list), [{ name: '맥주', qty: 3 }, { name: '소주', qty: 1 }]);
+});
+
+test('더치페이: 1인 금액 100원 단위 올림, 차액 표시', () => {
+  assert.deepEqual(splitBill(100000, 3), { people: 3, perPerson: 33400, collected: 100200, extra: 200 });
+  assert.deepEqual(splitBill(90000, 3), { people: 3, perPerson: 30000, collected: 90000, extra: 0 });
+  assert.equal(splitBill(50000, 0).people, 1);
+  assert.equal(splitBill(0, 4).perPerson, 0);
 });
 
 test('서비스 경과 시간(분)', () => {

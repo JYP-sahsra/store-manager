@@ -203,6 +203,13 @@ export function calcPayment(base, method, discount) {
   return { base, surcharge, discount, amount: beforeDiscount - discount };
 }
 
+// 더치페이: 1인 금액은 100원 단위로 올린다. 모은 돈이 결제 금액보다 많아지는 차액(extra)을 함께 돌려준다.
+export function splitBill(amount, people) {
+  const n = Math.max(1, Math.floor(people) || 1);
+  const perPerson = Math.ceil(amount / n / 100) * 100;
+  return { people: n, perPerson, collected: perPerson * n, extra: perPerson * n - amount };
+}
+
 // 결제가 끝나면 현재 수량까지를 결제 완료로 표시한다.
 // 초과된 서비스는 결제한 초과분만큼 서비스 시간을 늘려 확정한다(unpaidLines와 같은 now를 넘긴다).
 export function markSessionPaid(session, now = new Date()) {
