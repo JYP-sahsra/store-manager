@@ -201,8 +201,15 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .cancel-room { margin: 8px 0 2px; color: var(--danger); border-color: var(--danger); background: transparent; }
 .guest-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .guest-head h3 { margin: 0; }
-.room-money { display: flex; justify-content: space-between; gap: 8px; font-size: .95rem; }
-.room-money b { font-size: 1.05rem; color: var(--accent); }
+.room-money { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 6px; margin: 0; }
+.room-money div { padding: 6px 10px; border-radius: 10px; background: rgb(255 255 255 / .55); }
+.room-money dt { font-size: .75rem; color: var(--muted); }
+.room-money dd { margin: 0; font-weight: 800; font-variant-numeric: tabular-nums; }
+.room-money .due dd { color: var(--accent); }
+.room-money .extra { background: var(--danger); }
+.room-money .extra dt, .room-money .extra dd { color: #fff; }
+@media (prefers-color-scheme: dark) { .room-money div { background: rgb(0 0 0 / .25); } }
+.cancel-note { margin: 8px 0 2px; font-size: .85rem; }
 .badge.due { background: var(--accent); color: var(--primary-text); }
 .badge.ok { background: transparent; color: var(--ok); border: 1px solid var(--ok); }
 

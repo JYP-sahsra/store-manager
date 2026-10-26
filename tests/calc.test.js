@@ -24,6 +24,7 @@ import {
   changeGuests,
   changeDeclined,
   roomStatus,
+  overtimeCharge,
 } from '../js/calc.js';
 
 const room = { id: 'room1', name: '1번 룸', hourlyRate: 30000 };
@@ -150,6 +151,20 @@ test('룸 상태: 서비스 초과가 가장 우선, 종료 임박은 확인 필
   assert.equal(st(0, 0, 3, []), 'fresh');
   assert.equal(st(0, 100000, 1, ['running']), 'waiting');
   assert.equal(st(0, 100000, 0, ['running', 'running']), 'normal');
+});
+
+test('초과 추가 예정 금액: 초과 분을 시간 단위로 올림 × 시간당 단가, 초과 서비스만', () => {
+  const svcItems = [{ id: 'svc', price: 40000 }];
+  const at = (h, m) => new Date(2026, 9, 26, h, m).toISOString();
+  const services = [
+    { id: 'a', itemId: 'svc', startedAt: at(21, 0), hours: 1, paidHours: 1 }, // 22:00 종료
+    { id: 'b', itemId: 'svc', startedAt: at(20, 0), hours: 1, paidHours: 1 }, // 21:00 종료
+    { id: 'c', itemId: 'svc', startedAt: at(22, 0), hours: 1, paidHours: 0 }, // 진행 중
+  ];
+  const now = new Date(2026, 9, 26, 22, 10);
+  // a: 10분 초과 → 1시간, b: 70분 초과 → 2시간
+  assert.equal(overtimeCharge(services, svcItems, now), 40000 + 80000);
+  assert.equal(overtimeCharge(services, svcItems, new Date(2026, 9, 26, 20, 30)), 0);
 });
 
 test('서비스 경과 시간(분)', () => {

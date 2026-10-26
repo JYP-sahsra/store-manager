@@ -66,6 +66,17 @@ export function serviceMinutesLeft(svc, now = new Date()) {
   return Math.ceil((new Date(serviceEndAt(svc)).getTime() - new Date(now).getTime()) / 60000);
 }
 
+// 초과된 서비스를 연장할 때 추가될 금액. 시간은 1시간 단위라 초과 분을 올림해 시간당 단가를 곱한다.
+// 예: 시간당 40,000원 서비스가 10분 초과 → 1시간 → 40,000원, 70분 초과 → 2시간 → 80,000원
+export function overtimeCharge(services, items, now = new Date()) {
+  return services.reduce((sum, svc) => {
+    if (serviceStatus(svc, now) !== 'over') return sum;
+    const item = items.find((i) => i.id === svc.itemId);
+    const overMinutes = -serviceMinutesLeft(svc, now);
+    return sum + (item ? item.price * Math.max(1, Math.ceil(overMinutes / 60)) : 0);
+  }, 0);
+}
+
 // 서비스 시작 후 지난 분
 export function serviceElapsedMinutes(svc, now = new Date()) {
   return Math.max(0, Math.floor((new Date(now).getTime() - new Date(svc.startedAt).getTime()) / 60000));

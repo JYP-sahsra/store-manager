@@ -21,6 +21,7 @@ import {
   guestSummary,
   changeGuests,
   roomStatus,
+  overtimeCharge,
   CATEGORY_LABELS,
   METHOD_LABELS,
   HOURS_KEY,
@@ -196,18 +197,19 @@ function roomCard(room) {
   const status = roomStatus({ balance, paid, guest: g, serviceStates: services.map((v) => serviceStatus(v, now)) });
   const meta = [
     `입장 <b>${fmtTime12(s.startedAt)}</b>`,
-    `룸 ${s.hours}시간`,
-    g.guests ? `방문 ${g.guests}명${g.waiting ? ` · <b class="wait">대기 ${g.waiting}</b>` : ''}` : '방문 인원 미입력',
+    g.guests ? `방문 <b>${g.guests}명</b>${g.waiting ? ` · <b class="wait">대기 ${g.waiting}</b>` : ''}` : '방문 인원 미입력',
   ].join('<span class="sep">·</span>');
+  const extra = status === 'over' ? overtimeCharge(services, state.settings.items, now) : 0;
   return `<button class="room-tile st-${status}" data-action="open-room" data-room="${room.id}">
     <div class="room-head"><h2>${esc(room.name)}</h2>
       <span class="status-badge st-${status}">${ROOM_STATUS_LABELS[status](g)}</span></div>
     <div class="room-meta">${meta}</div>
     ${services.length ? `<div class="svc-grid">${services.map((v, i) => serviceTimeChip(v, i + 1, now)).join('')}</div>` : ''}
-    <div class="room-money">
-      <span>결제 ${won(paid)}</span>
-      ${balance ? `<b>미결제 ${won(balance)}</b>` : ''}
-    </div>
+    <dl class="room-money">
+      <div><dt>결제 완료</dt><dd>${won(paid)}</dd></div>
+      <div class="${balance ? 'due' : ''}"><dt>미결제</dt><dd>${won(balance)}</dd></div>
+      ${extra ? `<div class="extra"><dt>초과 추가</dt><dd>+${won(extra)}</dd></div>` : ''}
+    </dl>
   </button>`;
 }
 
@@ -302,7 +304,9 @@ function guestCard(s) {
         <button class="step" data-action="guests" data-delta="1" aria-label="방문 인원 늘리기">+</button>
       </div>
     </div>
-    <button class="btn block cancel-room" data-action="room-cancel">이용안함 · 룸 비우기</button>
+    ${(s.services || []).length
+      ? '<p class="muted cancel-note">기타 서비스를 시작한 뒤에는 이용안함(룸 비우기)을 할 수 없습니다. 잘못 추가한 서비스는 서비스 카드에서 삭제해 주세요.</p>'
+      : '<button class="btn block cancel-room" data-action="room-cancel">이용안함 · 룸 비우기</button>'}
   </section>`;
 }
 
@@ -653,6 +657,8 @@ const actions = {
   'room-cancel': () => {
     const room = roomById(ui.roomId);
     const s = state.sessions[room.id];
+    // 기타 서비스를 시작한 룸은 이용안함 처리하지 않는다(버튼도 숨기지만 한 번 더 막는다).
+    if ((s.services || []).length) return;
     const paid = sessionPaid(s);
     const balance = balanceOf(room, s);
     const detail = [
