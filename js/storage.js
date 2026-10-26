@@ -101,6 +101,16 @@ function normalizeSession(raw) {
     quantities: normalizeCounts(raw.quantities),
     paidHours: nonNegInt(raw.paidHours, 0),
     paidQuantities: normalizeCounts(raw.paidQuantities),
+    // 시간제 서비스(1인 1건). 이 필드가 없던 예전 데이터는 빈 목록으로 채운다.
+    services: (Array.isArray(raw.services) ? raw.services : [])
+      .filter((v) => isObject(v) && str(v.itemId) && str(v.startedAt))
+      .map((v) => ({
+        id: str(v.id) || newId(),
+        itemId: v.itemId,
+        startedAt: v.startedAt,
+        hours: nonNegInt(v.hours, 0),
+        paidHours: nonNegInt(v.paidHours, 0),
+      })),
   };
 }
 
@@ -209,6 +219,7 @@ export function mergeServerSettings(local, server, sessions) {
   for (const s of Object.values(sessions)) {
     if (!s) continue;
     for (const [id, qty] of Object.entries(s.quantities)) if (qty > 0) used.add(id);
+    for (const svc of s.services || []) used.add(svc.itemId);
   }
   for (const item of local.items) {
     if (used.has(item.id) && !next.items.some((i) => i.id === item.id)) {

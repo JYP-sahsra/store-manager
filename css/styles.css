@@ -174,6 +174,39 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .order-sum b { font-size: 1.4rem; font-variant-numeric: tabular-nums; }
 .btn.grow { flex: 2; }
 
+.chip.urgent { border-color: var(--danger); color: var(--danger); }
+.chip.urgent[aria-selected="true"] { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+.svc-alert { font-size: .85rem; font-weight: 700; margin: -2px 0 8px; color: var(--muted); }
+.svc-alert.ending { color: var(--accent); }
+.svc-alert.over { color: var(--danger); }
+
+.svc-add { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.svc-add-btn {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  min-height: 56px; padding: 10px 12px; border-radius: var(--radius);
+  border: 1px dashed var(--primary); background: var(--surface); cursor: pointer;
+}
+.svc-add-btn small { color: var(--muted); font-size: .8rem; }
+.svc-list { display: grid; gap: 10px; margin-bottom: 12px; }
+.svc-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px 4px; }
+.svc-card.ending { border: 2px solid var(--accent); padding: 11px 13px 3px; }
+.svc-card.over { border: 2px solid var(--danger); padding: 11px 13px 3px; }
+.svc-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.svc-badge { font-size: .8rem; font-weight: 800; padding: 2px 10px; border-radius: 999px; background: var(--bg); color: var(--muted); }
+.svc-badge.ending { background: var(--accent-soft); color: var(--accent); }
+.svc-badge.over { background: var(--danger); color: #fff; }
+.svc-time { display: flex; align-items: flex-end; gap: 10px; margin: 10px 0 4px; }
+.svc-start, .svc-end { display: flex; flex-direction: column; gap: 2px; font-size: .8rem; color: var(--muted); }
+.svc-start input {
+  min-height: 40px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--text); font-size: 16px; font-weight: 700;
+}
+.svc-end b { font-size: 1.2rem; color: var(--text); line-height: 40px; font-variant-numeric: tabular-nums; }
+.svc-card.over .svc-end b { color: var(--danger); }
+.svc-arrow { color: var(--muted); line-height: 40px; }
+.svc-hours { border-top: 1px solid var(--line); }
+
 .detail-head { margin-bottom: 12px; }
 .detail-head h2 { margin: 4px 0 0; }
 

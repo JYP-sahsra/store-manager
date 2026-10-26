@@ -3,11 +3,17 @@
 
 export const CARD_SURCHARGE_PERCENT = 10;
 
+// 분류 키(liquor/service)는 저장 데이터와 호환을 위해 그대로 두고, 화면 이름만 바꾼다.
+// liquor = 수량으로 세는 식음료, service = 1인 단위 시간제 서비스
 export const CATEGORY_LABELS = {
   room: '룸 이용',
-  liquor: '주류',
+  liquor: '식음료',
   service: '기타 서비스',
 };
+
+// 시간제 서비스 종료 예정 시각이 이만큼 남으면 '곧 종료'로 강조한다.
+export const ENDING_SOON_MINUTES = 10;
+const HOUR_MS = 60 * 60 * 1000;
 
 export const METHOD_LABELS = { cash: '현금', card: '카드' };
 
@@ -18,7 +24,8 @@ function makeLine(kind, itemId, name, unitPrice, qty) {
   return { kind, itemId, name, unitPrice, qty, subtotal: unitPrice * qty };
 }
 
-// 직전 결제 이후 아직 결제하지 않은 수량만 결제 대상 줄로 만든다.
+// 직전 결제 이후 아직 결제하지 않은 수량·시간만 결제 대상 줄로 만든다.
+// 시간제 서비스는 1인 1건이며 금액 = 시간당 단가 × 시간.
 export function unpaidLines(session, room, items) {
   const lines = [];
   const hours = session.hours - session.paidHours;
@@ -29,7 +36,72 @@ export function unpaidLines(session, room, items) {
     const qty = (session.quantities[item.id] || 0) - (session.paidQuantities[item.id] || 0);
     if (qty > 0) lines.push(makeLine(item.category, item.id, item.name, item.price, qty));
   }
+  for (const svc of session.services || []) {
+    const item = items.find((i) => i.id === svc.itemId);
+    const unpaid = svc.hours - svc.paidHours;
+    if (item && unpaid > 0) {
+      lines.push({ ...makeLine('service', item.id, item.name, item.price, unpaid), serviceId: svc.id, startedAt: svc.startedAt });
+    }
+  }
   return lines;
+}
+
+// ── 시간제 서비스 ──
+
+export function serviceEndAt(svc) {
+  return new Date(new Date(svc.startedAt).getTime() + svc.hours * HOUR_MS).toISOString();
+}
+
+// 'idle'(0시간) | 'running' | 'ending'(종료 10분 이내) | 'over'(종료 시각 지남)
+export function serviceStatus(svc, now = new Date()) {
+  if (svc.hours <= 0) return 'idle';
+  const left = new Date(serviceEndAt(svc)).getTime() - new Date(now).getTime();
+  if (left <= 0) return 'over';
+  if (left <= ENDING_SOON_MINUTES * 60 * 1000) return 'ending';
+  return 'running';
+}
+
+// 남은 분(지나면 음수)
+export function serviceMinutesLeft(svc, now = new Date()) {
+  return Math.ceil((new Date(serviceEndAt(svc)).getTime() - new Date(now).getTime()) / 60000);
+}
+
+export function addService(session, itemId, startedAt, id) {
+  const svc = { id, itemId, startedAt, hours: 1, paidHours: 0 };
+  return { ...session, services: [...(session.services || []), svc] };
+}
+
+// 결제한 시간 아래로는 줄일 수 없다.
+export function changeServiceHours(session, serviceId, delta) {
+  const svc = (session.services || []).find((s) => s.id === serviceId);
+  if (!svc) return session;
+  const next = svc.hours + delta;
+  if (next < svc.paidHours || next < 0) return session;
+  return { ...session, services: session.services.map((s) => (s.id === serviceId ? { ...s, hours: next } : s)) };
+}
+
+// 결제 기록이 없는 서비스만 지울 수 있다.
+export function removeService(session, serviceId) {
+  const svc = (session.services || []).find((s) => s.id === serviceId);
+  if (!svc || svc.paidHours > 0) return session;
+  return { ...session, services: session.services.filter((s) => s.id !== serviceId) };
+}
+
+export function setServiceStart(session, serviceId, startedAt) {
+  return { ...session, services: (session.services || []).map((s) => (s.id === serviceId ? { ...s, startedAt } : s)) };
+}
+
+// 'HH:MM'으로 시각만 바꾼다. 자정을 넘는 영업을 고려해 원래 시각과 12시간 넘게 벌어지면 하루를 옮긴다.
+export function withTimeOfDay(iso, hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || '');
+  if (!m) return iso;
+  const base = new Date(iso);
+  const next = new Date(base);
+  next.setHours(Number(m[1]), Number(m[2]), 0, 0);
+  const diff = next.getTime() - base.getTime();
+  if (diff > 12 * HOUR_MS) next.setDate(next.getDate() - 1);
+  if (diff < -12 * HOUR_MS) next.setDate(next.getDate() + 1);
+  return next.toISOString();
 }
 
 export function sumLines(lines) {
@@ -58,7 +130,12 @@ export function calcPayment(base, method, discount) {
 
 // 결제가 끝나면 현재 수량까지를 결제 완료로 표시한다.
 export function markSessionPaid(session) {
-  return { ...session, paidHours: session.hours, paidQuantities: { ...session.quantities } };
+  return {
+    ...session,
+    paidHours: session.hours,
+    paidQuantities: { ...session.quantities },
+    services: (session.services || []).map((s) => ({ ...s, paidHours: s.hours })),
+  };
 }
 
 // 결제한 수량 아래로는 줄일 수 없다(환불은 범위 밖).

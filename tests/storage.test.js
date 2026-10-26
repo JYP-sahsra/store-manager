@@ -63,8 +63,21 @@ test('잘못된 수량과 가격은 정리하고, 빠진 필드는 채운다', (
   assert.equal(s.settings.items[0].category, 'service');
   assert.deepEqual(s.sessions.room1.quantities, { x: 1 });
   assert.equal(s.sessions.room1.paidHours, 0);
+  assert.deepEqual(s.sessions.room1.services, []); // 예전 데이터에는 서비스 목록이 없다
   assert.equal(s.sessions.room2, null);
   assert.deepEqual(s.payments, []);
+});
+
+test('시간제 서비스 정규화: 잘못된 항목은 버리고 시간은 0 이상 정수', () => {
+  const s = normalizeState({
+    version: 1,
+    sessions: { room2: { id: 's', startedAt: '2026-10-26T12:00:00Z', services: [
+      { id: 'a', itemId: 'svc', startedAt: '2026-10-26T12:10:00Z', hours: 2, paidHours: 1 },
+      { id: 'b', itemId: 'svc', startedAt: '2026-10-26T12:20:00Z', hours: -3 },
+      { itemId: '', startedAt: 'x' },
+    ] } },
+  });
+  assert.deepEqual(s.sessions.room2.services.map((v) => [v.id, v.hours, v.paidHours]), [['a', 2, 1], ['b', 0, 0]]);
 });
 
 test('버전이 다르거나 결제 내역 형식이 틀리면 거부한다', () => {

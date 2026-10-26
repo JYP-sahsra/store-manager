@@ -9,6 +9,14 @@ import {
   businessDate,
   buildCloseRecord,
   isStaleBusinessDay,
+  addService,
+  changeServiceHours,
+  removeService,
+  setServiceStart,
+  serviceEndAt,
+  serviceStatus,
+  serviceMinutesLeft,
+  withTimeOfDay,
   CATEGORY_LABELS,
   METHOD_LABELS,
   HOURS_KEY,
@@ -63,6 +71,12 @@ const fmtTime = (iso) => {
   const d = new Date(iso);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
+// 시각 입력칸(type=time)이 오전/오후로 보이므로 서비스 종료 예정도 같은 형식으로 맞춘다.
+const fmtTime12 = (iso) => {
+  const d = new Date(iso);
+  const h = d.getHours();
+  return `${h < 12 ? '오전' : '오후'} ${pad(h % 12 || 12)}:${pad(d.getMinutes())}`;
+};
 const fmtDateTime = (iso) => {
   const d = new Date(iso);
   return `${d.getMonth() + 1}/${d.getDate()} ${fmtTime(iso)}`;
@@ -71,6 +85,10 @@ function elapsedText(iso) {
   const m = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
   const h = Math.floor(m / 60);
   return h ? `${h}시간 ${m % 60}분` : `${m}분`;
+}
+function leftText(minutes) {
+  if (minutes <= 0) return `${-minutes}분 초과`;
+  return minutes >= 60 ? `${Math.floor(minutes / 60)}시간 ${minutes % 60}분 남음` : `${minutes}분 남음`;
 }
 function elapsedClock(iso) {
   const m = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
@@ -167,11 +185,26 @@ function roomCard(room) {
     <div class="room-head"><h2>${esc(room.name)}</h2>
       <span class="badge ${balance ? 'due' : 'ok'}">${balance ? '미결제' : '결제 완료'}</span></div>
     <div class="room-clock"><b>${elapsedClock(s.startedAt)}</b><span>경과 · ${fmtTime(s.startedAt)} 입장 · ${s.hours}시간</span></div>
+    ${serviceAlert(s)}
     <div class="room-money">
       <span>결제 ${won(paid)}</span>
       ${balance ? `<b>미결제 ${won(balance)}</b>` : ''}
     </div>
   </button>`;
+}
+
+const STATUS_ORDER = { over: 0, ending: 1, running: 2 };
+
+// 진행 중인 서비스 인원과 가장 급한 종료 예정 시각(초과 > 10분 이내 > 진행 중)
+function serviceAlert(s) {
+  const now = new Date();
+  const list = (s.services || [])
+    .filter((v) => v.hours > 0)
+    .map((v) => ({ v, st: serviceStatus(v, now), end: serviceEndAt(v) }))
+    .sort((a, b) => STATUS_ORDER[a.st] - STATUS_ORDER[b.st] || a.end.localeCompare(b.end));
+  if (!list.length) return '';
+  const top = list[0];
+  return `<div class="svc-alert ${top.st}">서비스 ${list.length}명 · ${fmtTime12(top.end)} 종료 (${leftText(serviceMinutesLeft(top.v, now))})</div>`;
 }
 
 function counterRow({ label, sub, key, qty, paid }) {
@@ -200,15 +233,69 @@ function menuCard(item, s) {
   </div>`;
 }
 
+// 시간제 서비스 카드(1명): 시작 시각(수정 가능) → 종료 예정 시각, 남은 시간, 시간 −/+
+function serviceCard(svc, no, now) {
+  const item = state.settings.items.find((i) => i.id === svc.itemId);
+  const status = serviceStatus(svc, now);
+  const removable = svc.hours === 0 && svc.paidHours === 0;
+  return `<div class="svc-card ${status}">
+    <div class="svc-top">
+      <b>${esc(item?.name || '삭제된 서비스')} · ${no}번</b>
+      <span class="svc-badge ${status}">${status === 'idle' ? '시간 미정' : leftText(serviceMinutesLeft(svc, now))}</span>
+    </div>
+    <div class="svc-time">
+      <label class="svc-start"><span>시작</span>
+        <input type="time" data-input="svc-start" data-id="${esc(svc.id)}" value="${fmtTime(svc.startedAt)}" aria-label="${no}번 서비스 시작 시각"></label>
+      <span class="svc-arrow" aria-hidden="true">→</span>
+      <div class="svc-end"><span>종료 예정</span><b>${svc.hours ? fmtTime12(serviceEndAt(svc)) : '–'}</b></div>
+    </div>
+    <div class="counter-row svc-hours">
+      <div class="counter-label"><span>${svc.hours}시간 · ${won((item?.price || 0) * svc.hours)}</span>
+        <small>${svc.paidHours ? `결제 ${svc.paidHours}시간` : '미결제'}</small></div>
+      <div class="counter">
+        ${removable
+          ? `<button class="btn small danger" data-action="svc-remove" data-id="${esc(svc.id)}">삭제</button>`
+          : `<button class="step" data-action="svc-dec" data-id="${esc(svc.id)}" ${svc.hours <= svc.paidHours ? 'disabled' : ''} aria-label="${no}번 서비스 1시간 줄이기">−</button>`}
+        <span class="qty">${svc.hours}</span>
+        <button class="step" data-action="svc-inc" data-id="${esc(svc.id)}" aria-label="${no}번 서비스 1시간 연장">+</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function serviceSection(s) {
+  const now = new Date();
+  const svcItems = state.settings.items.filter((i) => i.category === 'service' && i.active);
+  const services = s.services || [];
+  // 시간제로 바뀌기 전에 수량으로 담은 서비스(시범 운영 데이터)는 수량 카드로 남겨 정산할 수 있게 한다.
+  const legacy = state.settings.items.filter((i) => i.category === 'service' && (s.quantities[i.id] || 0) > 0);
+  return `
+    <div class="svc-add">
+      ${svcItems.map((i) => `<button class="svc-add-btn" data-action="svc-add" data-item="${esc(i.id)}">
+        <b>+ ${esc(i.name)} 시작</b><small>1명 · 시간당 ${won(i.price)}</small></button>`).join('')
+        || '<p class="muted">관리 탭에서 기타 서비스 품목을 추가해 주세요.</p>'}
+    </div>
+    ${services.length
+      ? `<div class="svc-list">${services.map((v, i) => serviceCard(v, i + 1, now)).join('')}</div>`
+      : '<p class="muted center">서비스를 시작하면 1명씩 시작·종료 시각과 시간을 관리합니다.</p>'}
+    ${legacy.length ? `<div class="menu-grid">${legacy.map((i) => menuCard(i, s)).join('')}</div>` : ''}`;
+}
+
 function roomDetailView(roomId) {
   const room = roomById(roomId);
   const s = state.sessions[roomId];
   const items = state.settings.items.filter((i) => i.active || (s.quantities[i.id] || 0) > 0);
-  const cats = ['liquor', 'service'].filter((c) => items.some((i) => i.category === c));
+  const cats = ['liquor', 'service'].filter(
+    (c) => items.some((i) => i.category === c) || (c === 'service' && (s.services || []).length),
+  );
   if (!cats.includes(ui.category)) ui.category = cats[0] || 'liquor';
   const unpaid = unpaidLines(s, room, state.settings.items);
   const balance = sumLines(unpaid);
-  const unpaidCount = unpaid.reduce((a, l) => a + l.qty, 0);
+  const now = new Date();
+  const liveServices = (s.services || []).filter((v) => v.hours > 0);
+  const urgent = liveServices.some((v) => ['ending', 'over'].includes(serviceStatus(v, now)));
+  const chipLabel = (c) =>
+    c === 'service' && liveServices.length ? `${CATEGORY_LABELS[c]} ${liveServices.length}명` : CATEGORY_LABELS[c];
   return `
     <div class="detail-head">
       <button class="link" data-action="back">‹ 룸 목록</button>
@@ -220,13 +307,15 @@ function roomDetailView(roomId) {
     </section>
     ${cats.length ? `
       <div class="chips" role="tablist" aria-label="메뉴 분류">
-        ${cats.map((c) => `<button role="tab" class="chip" aria-selected="${ui.category === c}" data-action="category" data-category="${c}">${CATEGORY_LABELS[c]}</button>`).join('')}
+        ${cats.map((c) => `<button role="tab" class="chip ${c === 'service' && urgent ? 'urgent' : ''}" aria-selected="${ui.category === c}" data-action="category" data-category="${c}">${chipLabel(c)}</button>`).join('')}
       </div>
-      <div class="menu-grid">${items.filter((i) => i.category === ui.category).map((i) => menuCard(i, s)).join('')}</div>`
+      ${ui.category === 'service'
+        ? serviceSection(s)
+        : `<div class="menu-grid">${items.filter((i) => i.category === 'liquor').map((i) => menuCard(i, s)).join('')}</div>`}`
     : '<p class="empty">판매 중인 품목이 없습니다. 관리 탭에서 추가해 주세요.</p>'}
     <div class="order-bar">
       <div class="order-sum">
-        <span>${balance ? `미결제 ${unpaidCount}개` : '미결제 없음'} · 결제 ${won(sessionPaid(s))}</span>
+        <span>${balance ? `미결제 ${unpaid.length}건` : '미결제 없음'} · 결제 ${won(sessionPaid(s))}</span>
         <b>${won(balance)}</b>
       </div>
       <div class="actions">
@@ -283,7 +372,10 @@ function paymentSheet() {
 
 function linesTable(lines) {
   return `<table class="lines"><tbody>
-    ${lines.map((l) => `<tr><td>${esc(l.name)}</td><td class="num">${won(l.unitPrice)} × ${l.qty}</td><td class="num">${won(l.subtotal)}</td></tr>`).join('')}
+    ${lines.map((l) => `<tr>
+      <td>${esc(l.name)}${l.startedAt ? ` <small class="muted">${fmtTime(l.startedAt)}~</small>` : ''}</td>
+      <td class="num">${won(l.unitPrice)} × ${l.qty}${l.kind === 'room' || l.serviceId ? '시간' : ''}</td>
+      <td class="num">${won(l.subtotal)}</td></tr>`).join('')}
   </tbody></table>`;
 }
 
@@ -445,13 +537,14 @@ function settingsView() {
     </section>
     <section class="card">
       <h3>판매 품목</h3>
+      <p class="muted">식음료는 수량으로 세고, 기타 서비스는 1명·1시간 가격을 입력합니다(시간제).</p>
       ${d.items.length ? '' : '<p class="muted">품목이 없습니다.</p>'}
       ${d.items.map((it, i) => `<div class="item-edit">
         <label class="field grow"><span>이름</span>${input(`items.${i}.name`, it.name, 'autocomplete="off"')}</label>
         <label class="field"><span>분류</span>
           <select data-input="draft" data-path="items.${i}.category">
-            <option value="liquor" ${it.category === 'liquor' ? 'selected' : ''}>주류</option>
-            <option value="service" ${it.category === 'service' ? 'selected' : ''}>기타 서비스</option>
+            <option value="liquor" ${it.category === 'liquor' ? 'selected' : ''}>식음료</option>
+            <option value="service" ${it.category === 'service' ? 'selected' : ''}>기타 서비스(시간제)</option>
           </select></label>
         <label class="field"><span>가격(원)</span>${input(`items.${i}.price`, it.price, 'inputmode="numeric"')}</label>
         <label class="check"><input type="checkbox" data-input="draft" data-path="items.${i}.active" ${it.active ? 'checked' : ''}> 판매 중</label>
@@ -493,7 +586,7 @@ const actions = {
     }
     const now = new Date().toISOString();
     const id = el.dataset.room;
-    state.sessions[id] = { id: newId(), startedAt: now, hours: 0, quantities: {}, paidHours: 0, paidQuantities: {} };
+    state.sessions[id] = { id: newId(), startedAt: now, hours: 0, quantities: {}, paidHours: 0, paidQuantities: {}, services: [] };
     if (!state.businessDay.openedAt) state.businessDay.openedAt = now;
     ui.roomId = id;
     commit();
@@ -511,6 +604,10 @@ const actions = {
     ui.category = el.dataset.category;
     render();
   },
+  'svc-add': (el) => updateSession((s) => addService(s, el.dataset.item, new Date().toISOString(), newId())),
+  'svc-inc': (el) => updateSession((s) => changeServiceHours(s, el.dataset.id, 1)),
+  'svc-dec': (el) => updateSession((s) => changeServiceHours(s, el.dataset.id, -1)),
+  'svc-remove': (el) => updateSession((s) => removeService(s, el.dataset.id)),
   inc: (el) => updateCount(el.dataset.key, 1),
   dec: (el) => updateCount(el.dataset.key, -1),
   'open-payment': () => {
@@ -554,7 +651,9 @@ const actions = {
   },
   'delete-item': (el) => {
     const item = ui.draft.items[Number(el.dataset.index)];
-    const inUse = Object.values(state.sessions).some((s) => s && (s.quantities[item.id] || 0) > 0);
+    const inUse = Object.values(state.sessions).some(
+      (s) => s && ((s.quantities[item.id] || 0) > 0 || (s.services || []).some((v) => v.itemId === item.id)),
+    );
     if (inUse) {
       alert(`이용 중인 룸에서 "${item.name}"을(를) 판매 중이라 삭제할 수 없습니다.\n대신 '판매 중'을 끄면 새로 추가되지 않습니다.`);
       return;
@@ -573,13 +672,15 @@ const actions = {
   },
 };
 
-function updateCount(key, delta) {
+function updateSession(change) {
   const s = state.sessions[ui.roomId];
-  const next = changeCount(s, key, delta);
+  const next = change(s);
   if (next === s) return;
   state.sessions[ui.roomId] = next;
   commit();
 }
+
+const updateCount = (key, delta) => updateSession((s) => changeCount(s, key, delta));
 
 function confirmPayment() {
   const { roomId, method, discountText, endAfter } = ui.payment;
@@ -845,8 +946,16 @@ function onInput(e) {
 }
 app.addEventListener('input', onInput);
 app.addEventListener('change', (e) => {
-  if (e.target.dataset.input === 'import') importBackup(e.target);
-  else onInput(e);
+  const el = e.target;
+  if (el.dataset.input === 'import') importBackup(el);
+  else if (el.dataset.input === 'svc-start') {
+    // 시각 입력을 마친 뒤(change)에만 반영해, 입력 도중 화면이 다시 그려지지 않게 한다.
+    el.blur();
+    updateSession((s) => {
+      const svc = (s.services || []).find((v) => v.id === el.dataset.id);
+      return svc && el.value ? setServiceStart(s, svc.id, withTimeOfDay(svc.startedAt, el.value)) : s;
+    });
+  } else onInput(e);
 });
 
 // toggle 이벤트는 버블링되지 않아 capture로 받는다. 다시 그려도 접힘 상태를 유지한다.

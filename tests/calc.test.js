@@ -11,6 +11,14 @@ import {
   buildCloseRecord,
   isStaleBusinessDay,
   HOURS_KEY,
+  addService,
+  changeServiceHours,
+  removeService,
+  setServiceStart,
+  serviceEndAt,
+  serviceStatus,
+  serviceMinutesLeft,
+  withTimeOfDay,
 } from '../js/calc.js';
 
 const room = { id: 'room1', name: '1번 룸', hourlyRate: 30000 };
@@ -61,6 +69,50 @@ test('선불 현금 결제 후 연장분만 카드로 중간 결제하고 잔액
   assert.equal(second.payment.surcharge, 3800);
   assert.equal(second.payment.amount, 36800);
   assert.equal(sumLines(unpaidLines(second.session, room, items)), 0);
+});
+
+test('시간제 서비스: 1인 1건, 단가 × 시간, 서로 다른 시작 시각, 결제 후 연장분만 청구', () => {
+  const hostess = { id: 'svc', name: '도우미', category: 'service', price: 40000, active: true };
+  const all = [...items, hostess];
+  let s = emptySession();
+  s = addService(s, 'svc', new Date(2026, 9, 26, 21, 0).toISOString(), 'a');
+  s = addService(s, 'svc', new Date(2026, 9, 26, 21, 30).toISOString(), 'b');
+  s = changeServiceHours(s, 'a', 1); // a: 2시간, b: 1시간
+  const lines = unpaidLines(s, room, all).filter((l) => l.kind === 'service');
+  assert.deepEqual(lines.map((l) => [l.serviceId, l.qty, l.subtotal]), [['a', 2, 80000], ['b', 1, 40000]]);
+  assert.ok(lines[0].startedAt);
+
+  s = markSessionPaid(s);
+  assert.equal(sumLines(unpaidLines(s, room, all)), 0);
+  assert.equal(changeServiceHours(s, 'b', -1), s); // 결제한 시간 아래로 못 줄임
+  assert.equal(removeService(s, 'b'), s); // 결제 기록이 있으면 못 지움
+  s = changeServiceHours(s, 'b', 1);
+  assert.deepEqual(unpaidLines(s, room, all).map((l) => [l.serviceId, l.qty]), [['b', 1]]);
+});
+
+test('시간제 서비스 종료 예정 시각과 상태(10분 전 강조, 지나면 초과)', () => {
+  let s = addService(emptySession(), 'svc', new Date(2026, 9, 26, 21, 0).toISOString(), 'a');
+  s = changeServiceHours(s, 'a', 1);
+  const svc = s.services[0];
+  assert.equal(new Date(serviceEndAt(svc)).getHours(), 23);
+  assert.equal(serviceStatus(svc, new Date(2026, 9, 26, 22, 0)), 'running');
+  assert.equal(serviceStatus(svc, new Date(2026, 9, 26, 22, 50)), 'ending');
+  assert.equal(serviceStatus(svc, new Date(2026, 9, 26, 23, 1)), 'over');
+  assert.equal(serviceMinutesLeft(svc, new Date(2026, 9, 26, 22, 52)), 8);
+  assert.equal(serviceStatus({ ...svc, hours: 0 }), 'idle');
+  // 시작 시각 수정
+  const moved = setServiceStart(s, 'a', new Date(2026, 9, 26, 21, 30).toISOString());
+  assert.equal(new Date(serviceEndAt(moved.services[0])).getMinutes(), 30);
+});
+
+test('시각만 바꾸기: 자정을 넘는 영업 보정', () => {
+  const at = (d, h, m) => new Date(2026, 9, d, h, m).toISOString();
+  assert.equal(withTimeOfDay(at(26, 21, 0), '21:40'), at(26, 21, 40));
+  // 00:10에 등록했지만 실제 시작은 전날 23:50
+  assert.equal(withTimeOfDay(at(27, 0, 10), '23:50'), at(26, 23, 50));
+  // 23:50에 등록했는데 실제 시작이 다음날 00:20
+  assert.equal(withTimeOfDay(at(26, 23, 50), '00:20'), at(27, 0, 20));
+  assert.equal(withTimeOfDay(at(26, 21, 0), 'abc'), at(26, 21, 0));
 });
 
 test('카드는 판매액 × 1.1 − 할인, 현금은 판매액 − 할인', () => {
