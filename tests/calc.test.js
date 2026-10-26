@@ -19,6 +19,10 @@ import {
   serviceStatus,
   serviceMinutesLeft,
   withTimeOfDay,
+  serviceElapsedMinutes,
+  guestSummary,
+  changeGuests,
+  changeDeclined,
 } from '../js/calc.js';
 
 const room = { id: 'room1', name: '1번 룸', hourlyRate: 30000 };
@@ -107,6 +111,39 @@ test('시간제 서비스 종료 예정 시각과 상태(10분 전 강조, 지�
   // 시작 시각 수정
   const moved = setServiceStart(s, 'a', new Date(2026, 9, 26, 21, 30).toISOString());
   assert.equal(new Date(serviceEndAt(moved.services[0])).getMinutes(), 30);
+});
+
+test('방문 인원: 적용·이용안함·대기 현황과 상태', () => {
+  let s = emptySession();
+  assert.equal(guestSummary(s).status, 'none');
+  s = changeGuests(s, 4);
+  assert.deepEqual(guestSummary(s), { guests: 4, applied: 0, declined: 0, waiting: 4, status: 'waiting' });
+  s = addService(s, 'svc', new Date().toISOString(), 'a');
+  s = addService(s, 'svc', new Date().toISOString(), 'b');
+  s = changeDeclined(s, 1);
+  assert.deepEqual(guestSummary(s), { guests: 4, applied: 2, declined: 1, waiting: 1, status: 'partial' });
+  s = changeDeclined(s, 1);
+  assert.equal(guestSummary(s).status, 'all'); // 대기 0, 서비스 2명 + 이용안함 2명
+  assert.equal(changeDeclined(s, 1), s); // 대기 인원이 없으면 이용안함을 늘릴 수 없다
+  assert.equal(changeGuests(s, -1), s); // 적용 + 이용안함보다 적게 못 줄인다
+});
+
+test('방문 인원이 모자라면 서비스 추가 때 함께 늘고, 전원 이용안함 상태도 구분한다', () => {
+  let s = addService(emptySession(), 'svc', new Date().toISOString(), 'a');
+  assert.equal(s.guests, 1);
+  s = changeGuests(emptySession(), 2);
+  s = changeDeclined(changeDeclined(s, 1), 1);
+  assert.equal(guestSummary(s).status, 'declined');
+  // 방문 인원 없이 서비스만 있는 예전 데이터는 서비스 인원을 방문 인원으로 본다
+  const legacy = { ...emptySession(), services: [{ id: 'x' }, { id: 'y' }] };
+  assert.deepEqual(guestSummary(legacy), { guests: 2, applied: 2, declined: 0, waiting: 0, status: 'all' });
+  assert.equal(changeGuests(legacy, 1).guests, 3);
+});
+
+test('서비스 경과 시간(분)', () => {
+  const svc = { startedAt: new Date(2026, 9, 26, 21, 0).toISOString(), hours: 1 };
+  assert.equal(serviceElapsedMinutes(svc, new Date(2026, 9, 26, 21, 35)), 35);
+  assert.equal(serviceElapsedMinutes(svc, new Date(2026, 9, 26, 20, 50)), 0);
 });
 
 test('시각만 바꾸기: 자정을 넘는 영업 보정', () => {

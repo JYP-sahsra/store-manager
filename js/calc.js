@@ -66,9 +66,51 @@ export function serviceMinutesLeft(svc, now = new Date()) {
   return Math.ceil((new Date(serviceEndAt(svc)).getTime() - new Date(now).getTime()) / 60000);
 }
 
+// 서비스 시작 후 지난 분
+export function serviceElapsedMinutes(svc, now = new Date()) {
+  return Math.max(0, Math.floor((new Date(now).getTime() - new Date(svc.startedAt).getTime()) / 60000));
+}
+
+// 서비스를 추가할 때 방문 인원이 모자라면 함께 늘린다(서비스 1건 = 방문 고객 1명).
 export function addService(session, itemId, startedAt, id) {
   const svc = { id, itemId, startedAt, hours: 1, paidHours: 0 };
-  return { ...session, services: [...(session.services || []), svc] };
+  const services = [...(session.services || []), svc];
+  const guests = Math.max(session.guests || 0, services.length + (session.declined || 0));
+  return { ...session, services, guests };
+}
+
+// ── 방문 인원 ──
+// 방문 인원 = 서비스 적용 + 이용안함(이탈) + 대기. 금액에는 영향이 없고 운영 현황용이다.
+
+export function guestSummary(session) {
+  const applied = (session.services || []).length;
+  const declined = session.declined || 0;
+  // 방문 인원을 입력하기 전에 서비스부터 넣은 룸(예전 데이터 포함)은 적용 + 이용안함 인원으로 본다.
+  const guests = Math.max(session.guests || 0, applied + declined);
+  const waiting = guests - applied - declined;
+  let status;
+  if (!guests && !applied) status = 'none';
+  else if (waiting && !applied) status = 'waiting';
+  else if (waiting) status = 'partial';
+  else if (applied) status = 'all';
+  else status = 'declined';
+  return { guests, applied, declined, waiting, status };
+}
+
+// 방문 인원은 서비스 적용 + 이용안함 인원보다 적어질 수 없다.
+export function changeGuests(session, delta) {
+  const { guests, applied, declined } = guestSummary(session);
+  const next = guests + delta;
+  if (next < applied + declined) return session;
+  return { ...session, guests: next };
+}
+
+// 이용안함은 대기 인원 안에서만 늘릴 수 있다.
+export function changeDeclined(session, delta) {
+  const { waiting } = guestSummary(session);
+  const next = (session.declined || 0) + delta;
+  if (next < 0 || (delta > 0 && waiting < delta)) return session;
+  return { ...session, declined: next };
 }
 
 // 결제한 시간 아래로는 줄일 수 없다.

@@ -101,6 +101,9 @@ function normalizeSession(raw) {
     quantities: normalizeCounts(raw.quantities),
     paidHours: nonNegInt(raw.paidHours, 0),
     paidQuantities: normalizeCounts(raw.paidQuantities),
+    // 방문 인원·이용안함(이탈) 인원. 예전 데이터는 0으로 채운다.
+    guests: nonNegInt(raw.guests, 0),
+    declined: nonNegInt(raw.declined, 0),
     // 시간제 서비스(1인 1건). 이 필드가 없던 예전 데이터는 빈 목록으로 채운다.
     services: (Array.isArray(raw.services) ? raw.services : [])
       .filter((v) => isObject(v) && str(v.itemId) && str(v.startedAt))

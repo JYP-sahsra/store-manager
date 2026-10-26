@@ -26,7 +26,8 @@
 - 결제는 룸 시작·종료와 따로 한다. 결제 1건 = 직전 결제 이후 미결제 수량 전체. 결제한 수량 아래로는 줄일 수 없다.
 - 분류: `liquor`(화면 이름 "식음료", 수량제) / `service`(화면 이름 "기타 서비스", **1인 1건 시간제**). 키는 데이터 호환을 위해 바꾸지 않는다.
 - 시간제 서비스: 금액 = 1명·1시간 가격 × 시간. 추가 시각이 시작 시각(수정 가능, 자정 보정 `withTimeOfDay`), 종료 예정 = 시작 + 시간. 종료 `ENDING_SOON_MINUTES`(10분) 전 'ending', 지나면 'over'로 강조. 결제한 시간 아래로 못 줄이고, 결제 기록이 없을 때만 삭제(시간이 남아 있어도 가능, 카드의 [삭제] + 확인 창).
-- 룸 이용 시간은 입장~종료 전체 총시간이며 서비스 시간과 별개다.
+- 룸 이용 시간은 입장~종료 전체 총시간이며 서비스 시간과 별개다. 룸 타일에는 룸 경과 시간 대신 입장 시각과 서비스 인원별 경과 시간을 보여 준다.
+- 방문 인원(`guests`)·이용안함(`declined`): 대기 = 방문 − 서비스 건수 − 이용안함. 현황 상태 `guestSummary` = none/waiting/partial/all/declined. 금액과 무관한 운영 정보이며 현재 일 마감 기록(서버)에는 들어가지 않는다.
 - 미결제 잔액이 있으면 룸을 종료할 수 없다(결제 후 종료).
 - 이용 중인 룸이 있으면 일 마감을 할 수 없다.
 - 일 마감은 서버에만 저장한다(파일 다운로드 없음). 업로드 전 `pendingUploads`에 먼저 보관해 실패 시 재시도한다. 매출은 매출 탭의 월 캘린더(`list_day_closes`, 서버 미연결 시 `closeHistory`)로 본다.
@@ -39,7 +40,7 @@
 
 - localStorage 키 `storeManager.v1`, `version: 1`. 구조를 바꾸면 version을 올리고 `normalizeState`에 변환 코드를 추가한다.
 - 설정(`settings`)은 `settingsVersion`(현재 2)을 가진다. v1(필드 없음)의 `dayCutoffHour: 0`은 12로 옮긴다(`normalizeSettings`). 서버 `store_settings.data`도 같은 형식.
-- 세션(`sessions.roomN`): `id, startedAt, hours, quantities, paidHours, paidQuantities, services[{id, itemId, startedAt, hours, paidHours}]` (`services`가 없던 예전 데이터는 빈 목록으로 정규화)
+- 세션(`sessions.roomN`): `id, startedAt, hours, quantities, paidHours, paidQuantities, guests, declined, services[{id, itemId, startedAt, hours, paidHours}]` (`services`가 없던 예전 데이터는 빈 목록으로 정규화)
 - 결제(`payments[]`): `id, roomId, roomName, sessionId, paidAt, method('cash'|'card'), lines[{kind('room'|'liquor'|'service'), itemId, name, unitPrice, qty, subtotal, serviceId?, startedAt?}], coveredBase, base, surcharge, discount, amount` (시간제 서비스 줄은 qty = 시간)
 - 일 마감 기록: `buildCloseRecord()` 결과 = DB `day_closes` 컬럼(snake_case). 필드를 바꾸면 `schema.sql`의 `submit_day_close`도 같이 바꾼다.
 - 백업 파일: `{ app: 'store-manager', exportedAt, state(PIN 제외), close }`

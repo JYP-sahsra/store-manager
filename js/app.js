@@ -16,7 +16,11 @@ import {
   serviceEndAt,
   serviceStatus,
   serviceMinutesLeft,
+  serviceElapsedMinutes,
   withTimeOfDay,
+  guestSummary,
+  changeGuests,
+  changeDeclined,
   CATEGORY_LABELS,
   METHOD_LABELS,
   HOURS_KEY,
@@ -81,18 +85,24 @@ const fmtDateTime = (iso) => {
   const d = new Date(iso);
   return `${d.getMonth() + 1}/${d.getDate()} ${fmtTime(iso)}`;
 };
-function elapsedText(iso) {
-  const m = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
-  const h = Math.floor(m / 60);
-  return h ? `${h}시간 ${m % 60}분` : `${m}분`;
-}
 function leftText(minutes) {
   if (minutes <= 0) return `${-minutes}분 초과`;
   return minutes >= 60 ? `${Math.floor(minutes / 60)}시간 ${minutes % 60}분 남음` : `${minutes}분 남음`;
 }
-function elapsedClock(iso) {
-  const m = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
-  return `${Math.floor(m / 60)}:${pad(m % 60)}`;
+const clock = (minutes) => `${Math.floor(minutes / 60)}:${pad(minutes % 60)}`;
+
+// 방문 인원 현황(guestSummary.status) 화면 이름
+const GUEST_STATUS_LABELS = {
+  none: '인원 미입력',
+  waiting: '서비스 대기중',
+  partial: '일부 이용중',
+  all: '전원 적용중',
+  declined: '서비스 이용안함',
+};
+function guestCounts(g) {
+  return [`방문 ${g.guests}명`, g.applied && `적용 ${g.applied}`, g.waiting && `대기 ${g.waiting}`, g.declined && `이용안함 ${g.declined}`]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 // '12,000' 같은 입력을 정수로. 빈 값은 emptyValue, 숫자가 아니면 NaN.
@@ -170,21 +180,29 @@ function roomsView() {
     ${state.settings.items.length ? '' : '<p class="empty">관리 탭에서 판매 품목과 룸 요금을 먼저 입력해 주세요.</p>'}`;
 }
 
-// 상태별 타일: 대기(입장 버튼) / 이용 중·미결제(강조) / 이용 중·결제 완료
+// 상태별 타일: 비어 있음(입장 버튼) / 이용 중·미결제(강조) / 이용 중·결제 완료
 function roomCard(room) {
   const s = state.sessions[room.id];
   if (!s) {
     return `<div class="room-tile idle">
-      <div class="room-head"><h2>${esc(room.name)}</h2><span class="badge">대기</span></div>
-      <button class="btn primary block" data-action="start-room" data-room="${room.id}">손님 입장</button>
+      <div class="idle-info">
+        <h2>${esc(room.name)}</h2>
+        <span class="idle-state"><i class="dot" aria-hidden="true"></i>비어 있음</span>
+        <span class="muted">시간당 ${won(room.hourlyRate)}</span>
+      </div>
+      <button class="btn primary enter-btn" data-action="start-room" data-room="${room.id}">손님 입장</button>
     </div>`;
   }
   const balance = balanceOf(room, s);
   const paid = sessionPaid(s);
+  const g = guestSummary(s);
   return `<button class="room-tile ${balance ? 'due' : 'paid'}" data-action="open-room" data-room="${room.id}">
     <div class="room-head"><h2>${esc(room.name)}</h2>
       <span class="badge ${balance ? 'due' : 'ok'}">${balance ? '미결제' : '결제 완료'}</span></div>
-    <div class="room-clock"><b>${elapsedClock(s.startedAt)}</b><span>경과 · ${fmtTime(s.startedAt)} 입장 · ${s.hours}시간</span></div>
+    <div class="room-clock"><span>입장</span><b>${fmtTime12(s.startedAt)}</b><span>· 룸 ${s.hours}시간</span></div>
+    <div class="guest-line"><span class="guest-badge ${g.status}">${GUEST_STATUS_LABELS[g.status]}</span>
+      ${g.guests ? `<span class="muted">${guestCounts(g)}</span>` : ''}</div>
+    ${serviceChips(s)}
     ${serviceAlert(s)}
     <div class="room-money">
       <span>결제 ${won(paid)}</span>
@@ -194,6 +212,16 @@ function roomCard(room) {
 }
 
 const STATUS_ORDER = { over: 0, ending: 1, running: 2 };
+
+// 서비스 인원별 경과 시간 칩(시작 후 지난 시간, 상태 색)
+function serviceChips(s) {
+  const now = new Date();
+  const list = s.services || [];
+  if (!list.length) return '';
+  return `<div class="svc-chips"><span class="muted">서비스 경과</span>${list
+    .map((v, i) => `<span class="svc-chip ${serviceStatus(v, now)}">${i + 1}번 ${clock(serviceElapsedMinutes(v, now))}</span>`)
+    .join('')}</div>`;
+}
 
 // 진행 중인 서비스 인원과 가장 급한 종료 예정 시각(초과 > 10분 이내 > 진행 중)
 function serviceAlert(s) {
@@ -246,7 +274,7 @@ function serviceCard(svc, no, now) {
       ${removable ? `<button class="svc-del" data-action="svc-remove" data-id="${esc(svc.id)}" aria-label="${no}번 서비스 삭제">삭제</button>` : ''}
     </div>
     <div class="svc-time">
-      <label class="svc-start"><span>시작</span>
+      <label class="svc-start"><span>시작 · ${clock(serviceElapsedMinutes(svc, now))} 경과</span>
         <input type="time" data-input="svc-start" data-id="${esc(svc.id)}" value="${fmtTime(svc.startedAt)}" aria-label="${no}번 서비스 시작 시각"></label>
       <span class="svc-arrow" aria-hidden="true">→</span>
       <div class="svc-end"><span>종료 예정</span><b>${svc.hours ? fmtTime12(serviceEndAt(svc)) : '–'}</b></div>
@@ -261,6 +289,28 @@ function serviceCard(svc, no, now) {
       </div>
     </div>
   </div>`;
+}
+
+// 방문 인원과 이용안함(이탈) 관리. 대기 = 방문 − 서비스 적용 − 이용안함. 금액에는 영향 없음.
+function guestCard(s) {
+  const g = guestSummary(s);
+  const stepper = (action, value, label, decDisabled, incDisabled) => `<div class="counter">
+      <button class="step" data-action="${action}" data-delta="-1" ${decDisabled ? 'disabled' : ''} aria-label="${label} 줄이기">−</button>
+      <span class="qty">${value}</span>
+      <button class="step" data-action="${action}" data-delta="1" ${incDisabled ? 'disabled' : ''} aria-label="${label} 늘리기">+</button>
+    </div>`;
+  return `<section class="card guest-card">
+    <div class="guest-head"><h3>방문 인원</h3><span class="guest-badge ${g.status}">${GUEST_STATUS_LABELS[g.status]}</span></div>
+    <div class="counter-row">
+      <div class="counter-label"><span>방문 ${g.guests}명</span>
+        <small>서비스 적용 ${g.applied} · 대기 ${g.waiting} · 이용안함 ${g.declined}</small></div>
+      ${stepper('guests', g.guests, '방문 인원', g.guests <= g.applied + g.declined, false)}
+    </div>
+    <div class="counter-row">
+      <div class="counter-label"><span>이용안함</span><small>서비스를 받지 않거나 먼저 나간 고객</small></div>
+      ${stepper('declined', g.declined, '이용안함 인원', g.declined === 0, g.waiting === 0)}
+    </div>
+  </section>`;
 }
 
 function serviceSection(s) {
@@ -300,11 +350,12 @@ function roomDetailView(roomId) {
     <div class="detail-head">
       <button class="link" data-action="back">‹ 룸 목록</button>
       <div class="row-between"><h2>${esc(room.name)}</h2>
-        <span class="muted">${fmtTime(s.startedAt)} 입장 · ${elapsedText(s.startedAt)}</span></div>
+        <span class="entry-time">입장 <b>${fmtTime12(s.startedAt)}</b></span></div>
     </div>
     <section class="card time-card">
-      ${counterRow({ label: '이용 시간', sub: `시간당 ${won(room.hourlyRate)}`, key: HOURS_KEY, qty: s.hours, paid: s.paidHours })}
+      ${counterRow({ label: '룸 이용 시간', sub: `시간당 ${won(room.hourlyRate)}`, key: HOURS_KEY, qty: s.hours, paid: s.paidHours })}
     </section>
+    ${guestCard(s)}
     ${cats.length ? `
       <div class="chips" role="tablist" aria-label="메뉴 분류">
         ${cats.map((c) => `<button role="tab" class="chip ${c === 'service' && urgent ? 'urgent' : ''}" aria-selected="${ui.category === c}" data-action="category" data-category="${c}">${chipLabel(c)}</button>`).join('')}
@@ -586,7 +637,7 @@ const actions = {
     }
     const now = new Date().toISOString();
     const id = el.dataset.room;
-    state.sessions[id] = { id: newId(), startedAt: now, hours: 0, quantities: {}, paidHours: 0, paidQuantities: {}, services: [] };
+    state.sessions[id] = { id: newId(), startedAt: now, hours: 0, quantities: {}, paidHours: 0, paidQuantities: {}, guests: 0, declined: 0, services: [] };
     if (!state.businessDay.openedAt) state.businessDay.openedAt = now;
     ui.roomId = id;
     commit();
@@ -604,6 +655,8 @@ const actions = {
     ui.category = el.dataset.category;
     render();
   },
+  guests: (el) => updateSession((s) => changeGuests(s, Number(el.dataset.delta))),
+  declined: (el) => updateSession((s) => changeDeclined(s, Number(el.dataset.delta))),
   'svc-add': (el) => updateSession((s) => addService(s, el.dataset.item, new Date().toISOString(), newId())),
   'svc-inc': (el) => updateSession((s) => changeServiceHours(s, el.dataset.id, 1)),
   'svc-dec': (el) => updateSession((s) => changeServiceHours(s, el.dataset.id, -1)),
