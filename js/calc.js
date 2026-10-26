@@ -80,7 +80,7 @@ export function changeServiceHours(session, serviceId, delta) {
   return { ...session, services: session.services.map((s) => (s.id === serviceId ? { ...s, hours: next } : s)) };
 }
 
-// 결제 기록이 없는 서비스만 지울 수 있다.
+// 결제 기록이 없는 서비스만 지울 수 있다(시간이 남아 있어도 결제 전이면 삭제 가능 — 잘못 추가한 경우).
 export function removeService(session, serviceId) {
   const svc = (session.services || []).find((s) => s.id === serviceId);
   if (!svc || svc.paidHours > 0) return session;

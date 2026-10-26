@@ -82,6 +82,10 @@ test('시간제 서비스: 1인 1건, 단가 × 시간, 서로 다른 시작 시
   assert.deepEqual(lines.map((l) => [l.serviceId, l.qty, l.subtotal]), [['a', 2, 80000], ['b', 1, 40000]]);
   assert.ok(lines[0].startedAt);
 
+  // 결제 전에는 시간이 남아 있어도 잘못 추가한 서비스를 지울 수 있다
+  const extra = addService(s, 'svc', new Date().toISOString(), 'c');
+  assert.deepEqual(removeService(extra, 'c').services.map((v) => v.id), ['a', 'b']);
+
   s = markSessionPaid(s);
   assert.equal(sumLines(unpaidLines(s, room, all)), 0);
   assert.equal(changeServiceHours(s, 'b', -1), s); // 결제한 시간 아래로 못 줄임

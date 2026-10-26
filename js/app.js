@@ -237,11 +237,13 @@ function menuCard(item, s) {
 function serviceCard(svc, no, now) {
   const item = state.settings.items.find((i) => i.id === svc.itemId);
   const status = serviceStatus(svc, now);
-  const removable = svc.hours === 0 && svc.paidHours === 0;
+  // 잘못 누른 서비스는 결제 전이면 언제든 지울 수 있다(결제한 서비스는 기록 보존을 위해 지우지 않는다).
+  const removable = svc.paidHours === 0;
   return `<div class="svc-card ${status}">
     <div class="svc-top">
       <b>${esc(item?.name || '삭제된 서비스')} · ${no}번</b>
       <span class="svc-badge ${status}">${status === 'idle' ? '시간 미정' : leftText(serviceMinutesLeft(svc, now))}</span>
+      ${removable ? `<button class="svc-del" data-action="svc-remove" data-id="${esc(svc.id)}" aria-label="${no}번 서비스 삭제">삭제</button>` : ''}
     </div>
     <div class="svc-time">
       <label class="svc-start"><span>시작</span>
@@ -253,9 +255,7 @@ function serviceCard(svc, no, now) {
       <div class="counter-label"><span>${svc.hours}시간 · ${won((item?.price || 0) * svc.hours)}</span>
         <small>${svc.paidHours ? `결제 ${svc.paidHours}시간` : '미결제'}</small></div>
       <div class="counter">
-        ${removable
-          ? `<button class="btn small danger" data-action="svc-remove" data-id="${esc(svc.id)}">삭제</button>`
-          : `<button class="step" data-action="svc-dec" data-id="${esc(svc.id)}" ${svc.hours <= svc.paidHours ? 'disabled' : ''} aria-label="${no}번 서비스 1시간 줄이기">−</button>`}
+        <button class="step" data-action="svc-dec" data-id="${esc(svc.id)}" ${svc.hours <= svc.paidHours ? 'disabled' : ''} aria-label="${no}번 서비스 1시간 줄이기">−</button>
         <span class="qty">${svc.hours}</span>
         <button class="step" data-action="svc-inc" data-id="${esc(svc.id)}" aria-label="${no}번 서비스 1시간 연장">+</button>
       </div>
@@ -607,7 +607,11 @@ const actions = {
   'svc-add': (el) => updateSession((s) => addService(s, el.dataset.item, new Date().toISOString(), newId())),
   'svc-inc': (el) => updateSession((s) => changeServiceHours(s, el.dataset.id, 1)),
   'svc-dec': (el) => updateSession((s) => changeServiceHours(s, el.dataset.id, -1)),
-  'svc-remove': (el) => updateSession((s) => removeService(s, el.dataset.id)),
+  'svc-remove': (el) => {
+    const card = el.closest('.svc-card')?.querySelector('.svc-top b')?.textContent || '이 서비스';
+    if (!confirm(`${card}을(를) 삭제할까요?\n잘못 추가한 경우에만 삭제해 주세요.`)) return;
+    updateSession((s) => removeService(s, el.dataset.id));
+  },
   inc: (el) => updateCount(el.dataset.key, 1),
   dec: (el) => updateCount(el.dataset.key, -1),
   'open-payment': () => {

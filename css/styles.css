@@ -193,6 +193,11 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .svc-card.ending { border: 2px solid var(--accent); padding: 11px 13px 3px; }
 .svc-card.over { border: 2px solid var(--danger); padding: 11px 13px 3px; }
 .svc-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.svc-top b { flex: 1; min-width: 0; }
+.svc-del {
+  min-height: 32px; padding: 0 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--danger); font-size: .8rem; font-weight: 700;
+}
 .svc-badge { font-size: .8rem; font-weight: 800; padding: 2px 10px; border-radius: 999px; background: var(--bg); color: var(--muted); }
 .svc-badge.ending { background: var(--accent-soft); color: var(--accent); }
 .svc-badge.over { background: var(--danger); color: #fff; }
