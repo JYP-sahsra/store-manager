@@ -10,6 +10,11 @@
   --accent-soft: #fef3c7;
   --danger: #b91c1c;
   --ok: #047857;
+  --ok-soft: #dcfce7;
+  --danger-soft: #fee2e2;
+  --idle-soft: #e6eef9;
+  --idle-line: #b9cbe6;
+  --tile-shadow: 0 2px 8px rgb(15 23 42 / .08);
   --radius: 14px;
   color-scheme: light;
 }
@@ -27,6 +32,11 @@
     --accent-soft: #422006;
     --danger: #f87171;
     --ok: #34d399;
+    --ok-soft: #06301f;
+    --danger-soft: #3b1212;
+    --idle-soft: #14233a;
+    --idle-line: #2c4466;
+    --tile-shadow: 0 2px 10px rgb(0 0 0 / .45);
     color-scheme: dark;
   }
 }
@@ -128,10 +138,11 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .room-tile {
   display: block; width: 100%; text-align: left; cursor: pointer;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px;
+  box-shadow: var(--tile-shadow);
 }
 .room-tile.idle {
   cursor: default; display: flex; align-items: center; gap: 12px;
-  background: var(--bg); border: 1.5px dashed var(--line); padding: 14px 14px 14px 16px;
+  background: var(--idle-soft); border: 1px solid var(--idle-line); padding: 14px 14px 14px 16px;
 }
 .idle-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .idle-info h2 { margin: 0 0 2px; font-size: 1.25rem; }
@@ -140,7 +151,16 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .enter-btn { flex-shrink: 0; min-height: 56px; padding: 0 20px; font-size: 1.05rem; border-radius: 14px; }
 .room-tile.due { background: var(--accent-soft); border-color: var(--accent); }
 .room-tile.paid { border-color: var(--ok); }
-.room-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.room-tile.normal { background: var(--ok-soft); border-color: var(--ok); }
+.room-tile.fresh { background: var(--accent-soft); border: 1.5px dashed var(--accent); }
+.room-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.room-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.badge.normal { background: var(--ok); color: #fff; }
+.badge.alert { box-shadow: 0 2px 6px rgb(0 0 0 / .25); font-weight: 800; }
+.badge.alert.ending { background: var(--accent); color: #fff; }
+.badge.alert.over { background: var(--danger); color: #fff; animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 4px var(--danger-soft), 0 2px 6px rgb(0 0 0 / .25); } }
+@media (prefers-reduced-motion: reduce) { .badge.alert.over { animation: none; } }
 .room-head h2 { margin: 0; font-size: 1.25rem; }
 .room-clock { display: flex; align-items: baseline; gap: 6px; margin: 2px 0 8px; }
 .room-clock b { font-size: 1.6rem; font-variant-numeric: tabular-nums; line-height: 1.1; }

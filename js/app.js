@@ -195,9 +195,14 @@ function roomCard(room) {
   const balance = balanceOf(room, s);
   const paid = sessionPaid(s);
   const g = guestSummary(s);
-  return `<button class="room-tile ${balance ? 'due' : 'paid'}" data-action="open-room" data-room="${room.id}">
+  const pay = paymentState(balance, paid, g);
+  const alert = urgentServiceStatus(s);
+  return `<button class="room-tile ${pay.tile}" data-action="open-room" data-room="${room.id}">
     <div class="room-head"><h2>${esc(room.name)}</h2>
-      <span class="badge ${balance ? 'due' : 'ok'}">${balance ? '미결제' : '결제 완료'}</span></div>
+      <div class="room-badges">
+        ${alert ? `<span class="badge alert ${alert}">${alert === 'over' ? '초과 중' : '종료 임박'}</span>` : ''}
+        <span class="badge ${pay.badge}">${pay.label}</span>
+      </div></div>
     <div class="room-clock"><span>입장</span><b>${fmtTime12(s.startedAt)}</b><span>· 룸 ${s.hours}시간</span></div>
     <div class="guest-line"><span class="guest-badge ${g.status}">${GUEST_STATUS_LABELS[g.status]}</span>
       ${g.guests ? `<span class="muted">${guestCounts(g)}</span>` : ''}</div>
@@ -210,7 +215,25 @@ function roomCard(room) {
   </button>`;
 }
 
+// 결제 상태: 미결제 / 결제 완료 / 주문 전(아직 담은 것도 받은 것도 없음).
+// 결제를 마쳤고 방문 인원 전원에게 서비스가 적용 중이면 '정상 진행중'(초록 타일).
+function paymentState(balance, paid, g) {
+  if (balance) return { tile: 'due', badge: 'due', label: '미결제' };
+  if (!paid) return { tile: 'fresh', badge: '', label: '주문 전' };
+  if (g.status === 'all') return { tile: 'normal', badge: 'normal', label: '정상 진행중' };
+  return { tile: 'paid', badge: 'ok', label: '결제 완료' };
+}
+
 const STATUS_ORDER = { over: 0, ending: 1, running: 2 };
+
+// 서비스 중 하나라도 초과면 'over', 종료 10분 이내면 'ending', 아니면 null
+function urgentServiceStatus(s) {
+  const now = new Date();
+  const states = (s.services || []).map((v) => serviceStatus(v, now));
+  if (states.includes('over')) return 'over';
+  if (states.includes('ending')) return 'ending';
+  return null;
+}
 
 // 서비스 인원별 경과 시간 칩(시작 후 지난 시간, 상태 색)
 function serviceChips(s) {
