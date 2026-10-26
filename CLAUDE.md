@@ -24,13 +24,15 @@
 - 결제는 룸 시작·종료와 따로 한다. 결제 1건 = 직전 결제 이후 미결제 수량 전체. 결제한 수량 아래로는 줄일 수 없다.
 - 미결제 잔액이 있으면 룸을 종료할 수 없다(결제 후 종료).
 - 이용 중인 룸이 있으면 일 마감을 할 수 없다.
-- 영업일 = 영업 시작부터 [일 마감]까지. 날짜는 첫 룸 시작 시각 기준이며, `dayCutoffHour`(기본 0) 이전이면 전날로 친다.
+- 영업일 = 20시 ~ 다음날 12시(정오) 전, 시작한 날 매출로 기록한다. 영업일은 영업 시작부터 [일 마감]까지이며, 날짜는 첫 룸 시작 시각 기준으로 `dayCutoffHour`(기본 12) 이전이면 전날로 친다.
+- 마감을 빠뜨린 지난 영업일(`isStaleBusinessDay`)이면 경고하고, 룸 시작 시 확인을 받는다.
 - 가격은 관리자가 폰에서 바로 바꾸고 서버에 저장한다(승인 절차 없음). `updatedAt`/`updatedBy`를 기록한다.
 - 결제 기록에는 품목 이름·단가를 복사해 둔다. 이후 가격이 바뀌어도 과거 기록은 바뀌지 않는다.
 
 ## 데이터 계약
 
 - localStorage 키 `storeManager.v1`, `version: 1`. 구조를 바꾸면 version을 올리고 `normalizeState`에 변환 코드를 추가한다.
+- 설정(`settings`)은 `settingsVersion`(현재 2)을 가진다. v1(필드 없음)의 `dayCutoffHour: 0`은 12로 옮긴다(`normalizeSettings`). 서버 `store_settings.data`도 같은 형식.
 - 결제(`payments[]`): `id, roomId, roomName, sessionId, paidAt, method('cash'|'card'), lines[{kind('room'|'liquor'|'service'), itemId, name, unitPrice, qty, subtotal}], coveredBase, base, surcharge, discount, amount`
 - 일 마감 기록: `buildCloseRecord()` 결과 = DB `day_closes` 컬럼(snake_case). 필드를 바꾸면 `schema.sql`의 `submit_day_close`도 같이 바꾼다.
 - 백업 파일: `{ app: 'store-manager', exportedAt, state(PIN 제외), close }`

@@ -6,6 +6,10 @@ export const STATE_VERSION = 1;
 export const ROOM_IDS = ['room1', 'room2', 'room3'];
 export const ITEM_CATEGORIES = ['liquor', 'service'];
 const BACKUP_APP = 'store-manager';
+// 영업일 규칙: 20시 ~ 다음날 12시(정오)까지를 시작한 날의 영업으로 본다.
+export const DEFAULT_DAY_CUTOFF_HOUR = 12;
+// v2: 기준 시각 기본값을 0시 → 12시로 바꿨다. v1 설정의 0시는 12시로 옮긴다.
+export const SETTINGS_VERSION = 2;
 const CLOSE_HISTORY_LIMIT = 60;
 
 // UUID v4. http(비보안) 접속에서는 crypto.randomUUID가 없어 직접 만든다.
@@ -23,7 +27,8 @@ export function defaultSettings() {
     storeName: '',
     rooms: ROOM_IDS.map((id, i) => ({ id, name: `${i + 1}번 룸`, hourlyRate: 0 })),
     items: [],
-    dayCutoffHour: 0,
+    dayCutoffHour: DEFAULT_DAY_CUTOFF_HOUR,
+    settingsVersion: SETTINGS_VERSION,
     updatedAt: null,
     updatedBy: null,
   };
@@ -61,6 +66,10 @@ export function normalizeSettings(raw) {
   const d = defaultSettings();
   if (!isObject(raw)) return d;
   const rooms = Array.isArray(raw.rooms) ? raw.rooms : [];
+  let cutoff = Number.isInteger(raw.dayCutoffHour) && raw.dayCutoffHour >= 0 && raw.dayCutoffHour <= 23
+    ? raw.dayCutoffHour
+    : DEFAULT_DAY_CUTOFF_HOUR;
+  if ((raw.settingsVersion ?? 1) < 2 && cutoff === 0) cutoff = DEFAULT_DAY_CUTOFF_HOUR;
   return {
     storeName: str(raw.storeName),
     rooms: ROOM_IDS.map((id, i) => {
@@ -76,9 +85,8 @@ export function normalizeSettings(raw) {
         price: nonNegInt(i.price, 0),
         active: i.active !== false,
       })),
-    dayCutoffHour: Number.isInteger(raw.dayCutoffHour) && raw.dayCutoffHour >= 0 && raw.dayCutoffHour <= 23
-      ? raw.dayCutoffHour
-      : 0,
+    dayCutoffHour: cutoff,
+    settingsVersion: SETTINGS_VERSION,
     updatedAt: str(raw.updatedAt) || null,
     updatedBy: str(raw.updatedBy) || null,
   };

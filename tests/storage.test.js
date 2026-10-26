@@ -6,6 +6,7 @@ import {
   loadState,
   saveState,
   normalizeState,
+  normalizeSettings,
   exportBackup,
   parseBackup,
   validateSettings,
@@ -82,6 +83,14 @@ test('백업 파일에는 PIN이 없고, 다시 가져올 수 있다', () => {
   assert.equal(restored.pin, '');
   assert.throws(() => parseBackup('{"app":"other","state":{}}'), /백업 파일이 아닙니다/);
   assert.throws(() => parseBackup('nope'), /JSON/);
+});
+
+test('영업일 기준 시각: 기본 12시, v1 설정의 0시는 12시로 옮기고 v2의 값은 유지', () => {
+  assert.equal(defaultState().settings.dayCutoffHour, 12);
+  assert.equal(normalizeSettings({ dayCutoffHour: 0 }).dayCutoffHour, 12);
+  assert.equal(normalizeSettings({ dayCutoffHour: 6 }).dayCutoffHour, 6);
+  assert.equal(normalizeSettings({ dayCutoffHour: 0, settingsVersion: 2 }).dayCutoffHour, 0);
+  assert.equal(normalizeSettings({ dayCutoffHour: 0 }).settingsVersion, 2);
 });
 
 test('설정 검증: 이름, 가격, 기준 시각', () => {

@@ -9,6 +9,7 @@ import {
   summarizeDay,
   businessDate,
   buildCloseRecord,
+  isStaleBusinessDay,
   HOURS_KEY,
 } from '../js/calc.js';
 
@@ -136,6 +137,27 @@ test('영업일 날짜: 영업 시작 시각 기준, 기준 시각 이전이면 
   assert.equal(businessDate(new Date(2026, 9, 27, 0, 10), 0), '2026-10-27');
   assert.equal(businessDate(new Date(2026, 9, 27, 3, 0), 6), '2026-10-26');
   assert.equal(businessDate(new Date(2026, 9, 1, 3, 0), 6), '2026-09-30');
+});
+
+test('영업일 규칙(기준 12시): 20시 ~ 다음날 정오 전 영업은 시작한 날 매출', () => {
+  const at = (day, h, m = 0) => new Date(2026, 9, day, h, m).toISOString();
+  const close = (openedAt, closedAt) =>
+    buildCloseRecord({ id: 'c', openedAt, closedAt, cutoffHour: 12, payments: [] }).business_date;
+  assert.equal(close(at(26, 20), at(27, 0, 40)), '2026-10-26');
+  assert.equal(close(at(26, 20), at(27, 11, 30)), '2026-10-26');
+  // 자정 이후 첫 손님, 자정 이후 결제 없이 마감
+  assert.equal(close(at(27, 0, 10), at(27, 1, 30)), '2026-10-26');
+  assert.equal(close(null, at(27, 0, 5)), '2026-10-26');
+  // 정오 이후는 그날 영업
+  assert.equal(close(at(27, 19, 50), at(28, 0, 30)), '2026-10-27');
+});
+
+test('마감을 빠뜨린 지난 영업일 감지', () => {
+  const opened = new Date(2026, 9, 26, 20, 0);
+  assert.equal(isStaleBusinessDay(opened, new Date(2026, 9, 27, 2, 0), 12), false);
+  assert.equal(isStaleBusinessDay(opened, new Date(2026, 9, 27, 11, 59), 12), false);
+  assert.equal(isStaleBusinessDay(opened, new Date(2026, 9, 27, 12, 0), 12), true);
+  assert.equal(isStaleBusinessDay(null, new Date(2026, 9, 28), 12), false);
 });
 
 test('마감 기록은 자정을 넘긴 결제도 영업 시작일로 묶는다', () => {

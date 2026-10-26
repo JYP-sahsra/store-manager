@@ -8,6 +8,7 @@ import {
   summarizeDay,
   businessDate,
   buildCloseRecord,
+  isStaleBusinessDay,
   CATEGORY_LABELS,
   METHOD_LABELS,
   HOURS_KEY,
@@ -22,6 +23,7 @@ import {
   validateSettings,
   mergeServerSettings,
   addCloseHistory,
+  SETTINGS_VERSION,
 } from './storage.js';
 import * as api from './api.js';
 
@@ -93,6 +95,16 @@ const sessionPaid = (s) => state.payments.filter((p) => p.sessionId === s.id).re
 const balanceOf = (room, s) => sumLines(unpaidLines(s, room, state.settings.items));
 const currentBusinessDate = () =>
   businessDate(state.businessDay.openedAt || new Date(), state.settings.dayCutoffHour);
+// 마감을 빠뜨린 지난 영업일이면 그 날짜, 아니면 null
+const staleBusinessDate = () =>
+  isStaleBusinessDay(state.businessDay.openedAt, new Date(), state.settings.dayCutoffHour)
+    ? currentBusinessDate()
+    : null;
+function staleWarning() {
+  const date = staleBusinessDate();
+  if (!date) return '';
+  return `<p class="warn" role="alert">${esc(date)} 영업이 아직 마감되지 않았습니다. 마감 전 결제는 모두 ${esc(date)} 매출로 기록됩니다. 룸을 모두 종료하고 마감 탭에서 마감해 주세요.</p>`;
+}
 
 function downloadFile(name, text) {
   const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
@@ -126,7 +138,7 @@ function render() {
 function roomsView() {
   if (ui.roomId && state.sessions[ui.roomId]) return roomDetailView(ui.roomId);
   ui.roomId = null;
-  return `<div class="room-list">${state.settings.rooms.map(roomCard).join('')}</div>
+  return `${staleWarning()}<div class="room-list">${state.settings.rooms.map(roomCard).join('')}</div>
     ${state.settings.items.length ? '' : '<p class="empty">설정 탭에서 판매 품목과 룸 요금을 먼저 입력해 주세요.</p>'}`;
 }
 
@@ -305,6 +317,7 @@ function closeView() {
   const pending = state.pendingUploads;
   const past = ui.pastCloses;
   return `
+    ${staleWarning()}
     <section class="card">
       <h3>${esc(preview.business_date)} 영업 요약</h3>
       <p class="muted">${state.businessDay.openedAt ? `영업 시작 ${fmtDateTime(state.businessDay.openedAt)} · ` : ''}결제 ${preview.payment_count}건</p>
@@ -360,7 +373,7 @@ function settingsView() {
       <label class="field"><span>매장명</span>${input('storeName', d.storeName, 'autocomplete="off"')}</label>
       <label class="field"><span>관리자 이름 (마감·설정 변경 기록용)</span>${input('managerName', d.managerName, 'autocomplete="off"')}</label>
       <label class="field"><span>매장 PIN (서버 저장용)</span>${input('pin', d.pin, 'type="password" autocomplete="off"')}</label>
-      <label class="field"><span>영업일 기준 시각 (0~23시)</span>${input('dayCutoffHour', d.dayCutoffHour, 'inputmode="numeric"')}</label>
+      <label class="field"><span>영업일 기준 시각 (0~23시, 이 시각 이전에 시작한 영업은 전날 매출. 기본 12)</span>${input('dayCutoffHour', d.dayCutoffHour, 'inputmode="numeric"')}</label>
     </section>
     <section class="card">
       <h3>룸 요금</h3>
@@ -410,6 +423,10 @@ const actions = {
     render();
   },
   'start-room': (el) => {
+    const stale = staleBusinessDate();
+    if (stale && !confirm(`${stale} 영업이 아직 마감되지 않았습니다.\n지금 시작하면 이 손님 매출도 ${stale} 매출로 기록됩니다.\n\n그래도 시작할까요? (취소 후 마감 탭에서 먼저 마감할 수 있습니다)`)) {
+      return;
+    }
     const now = new Date().toISOString();
     const id = el.dataset.room;
     state.sessions[id] = { id: newId(), startedAt: now, hours: 0, quantities: {}, paidHours: 0, paidQuantities: {} };
@@ -639,6 +656,7 @@ async function saveSettingsDraft() {
       active: i.active,
     })),
     dayCutoffHour: parseWon(d.dayCutoffHour, Number.NaN),
+    settingsVersion: SETTINGS_VERSION,
   };
   const errors = validateSettings(next);
   if (errors.length) {

@@ -129,6 +129,12 @@ export function businessDate(value, cutoffHour = 0) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// 열려 있는 영업일이 지금 기준으로 이미 지난 날인지(마감을 빠뜨렸는지)
+export function isStaleBusinessDay(openedAt, now, cutoffHour = 0) {
+  if (!openedAt) return false;
+  return businessDate(openedAt, cutoffHour) < businessDate(now, cutoffHour);
+}
+
 // 일 마감 기록. 필드 이름은 DB(day_closes) 컬럼과 같다.
 export function buildCloseRecord({ id, openedAt, closedAt, closedBy, cutoffHour, payments }) {
   const s = summarizeDay(payments);
