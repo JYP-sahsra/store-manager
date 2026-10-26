@@ -1,6 +1,6 @@
 // 온라인이면 항상 최신 파일을 받고(network-first), 오프라인이면 캐시로 동작한다.
 // 앱 파일 목록이 바뀌면 CACHE 버전을 올린다.
-const CACHE = 'store-manager-v3';
+const CACHE = 'store-manager-v4';
 const SHELL = [
   './',
   './index.html',

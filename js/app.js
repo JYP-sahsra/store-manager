@@ -34,6 +34,7 @@ let state = loaded.state;
 const ui = {
   tab: 'rooms',
   roomId: null, // 상세를 보고 있는 룸
+  category: 'liquor', // 룸 화면에서 보고 있는 메뉴 분류
   payment: null, // { roomId, method, discountText, endAfter }
   draft: null, // 설정 화면 편집 중인 값
   notice: loaded.warning,
@@ -43,9 +44,8 @@ const ui = {
 
 const TABS = [
   { id: 'rooms', label: '룸' },
-  { id: 'history', label: '결제내역' },
-  { id: 'close', label: '마감' },
-  { id: 'settings', label: '설정' },
+  { id: 'sales', label: '매출' },
+  { id: 'settings', label: '관리' },
 ];
 
 // ── 공통 ─────────────────────────────────────────────
@@ -66,6 +66,10 @@ function elapsedText(iso) {
   const m = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
   const h = Math.floor(m / 60);
   return h ? `${h}시간 ${m % 60}분` : `${m}분`;
+}
+function elapsedClock(iso) {
+  const m = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+  return `${Math.floor(m / 60)}:${pad(m % 60)}`;
 }
 
 // '12,000' 같은 입력을 정수로. 빈 값은 emptyValue, 숫자가 아니면 NaN.
@@ -103,7 +107,7 @@ const staleBusinessDate = () =>
 function staleWarning() {
   const date = staleBusinessDate();
   if (!date) return '';
-  return `<p class="warn" role="alert">${esc(date)} 영업이 아직 마감되지 않았습니다. 마감 전 결제는 모두 ${esc(date)} 매출로 기록됩니다. 룸을 모두 종료하고 마감 탭에서 마감해 주세요.</p>`;
+  return `<p class="warn" role="alert">${esc(date)} 영업이 아직 마감되지 않았습니다. 마감 전 결제는 모두 ${esc(date)} 매출로 기록됩니다. 룸을 모두 종료하고 매출 탭에서 마감해 주세요.</p>`;
 }
 
 function downloadFile(name, text) {
@@ -120,7 +124,7 @@ function downloadFile(name, text) {
 // ── 화면 ─────────────────────────────────────────────
 
 function render() {
-  const views = { rooms: roomsView, history: historyView, close: closeView, settings: settingsView };
+  const views = { rooms: roomsView, sales: salesView, settings: settingsView };
   app.innerHTML = `
     <header class="topbar">
       <h1>${esc(state.settings.storeName || '매장관리')}</h1>
@@ -139,24 +143,27 @@ function roomsView() {
   if (ui.roomId && state.sessions[ui.roomId]) return roomDetailView(ui.roomId);
   ui.roomId = null;
   return `${staleWarning()}<div class="room-list">${state.settings.rooms.map(roomCard).join('')}</div>
-    ${state.settings.items.length ? '' : '<p class="empty">설정 탭에서 판매 품목과 룸 요금을 먼저 입력해 주세요.</p>'}`;
+    ${state.settings.items.length ? '' : '<p class="empty">관리 탭에서 판매 품목과 룸 요금을 먼저 입력해 주세요.</p>'}`;
 }
 
+// 상태별 타일: 대기(입장 버튼) / 이용 중·미결제(강조) / 이용 중·결제 완료
 function roomCard(room) {
   const s = state.sessions[room.id];
   if (!s) {
-    return `<div class="card room-card">
+    return `<div class="room-tile idle">
       <div class="room-head"><h2>${esc(room.name)}</h2><span class="badge">대기</span></div>
-      <button class="btn primary block" data-action="start-room" data-room="${room.id}">시작</button>
+      <button class="btn primary block" data-action="start-room" data-room="${room.id}">손님 입장</button>
     </div>`;
   }
   const balance = balanceOf(room, s);
-  return `<button class="card room-card active" data-action="open-room" data-room="${room.id}">
-    <div class="room-head"><h2>${esc(room.name)}</h2><span class="badge on">이용 중</span></div>
-    <p class="muted">시작 ${fmtTime(s.startedAt)} · ${elapsedText(s.startedAt)} 경과 · ${s.hours}시간</p>
+  const paid = sessionPaid(s);
+  return `<button class="room-tile ${balance ? 'due' : 'paid'}" data-action="open-room" data-room="${room.id}">
+    <div class="room-head"><h2>${esc(room.name)}</h2>
+      <span class="badge ${balance ? 'due' : 'ok'}">${balance ? '미결제' : '결제 완료'}</span></div>
+    <div class="room-clock"><b>${elapsedClock(s.startedAt)}</b><span>경과 · ${fmtTime(s.startedAt)} 입장 · ${s.hours}시간</span></div>
     <div class="room-money">
-      <span>결제 완료 <b>${won(sessionPaid(s))}</b></span>
-      <span>미결제 <b class="${balance ? 'balance' : ''}">${won(balance)}</b></span>
+      <span>결제 ${won(paid)}</span>
+      ${balance ? `<b>미결제 ${won(balance)}</b>` : ''}
     </div>
   </button>`;
 }
@@ -172,38 +179,53 @@ function counterRow({ label, sub, key, qty, paid }) {
   </div>`;
 }
 
+// 셀프 주문형 메뉴 카드. 담긴 수량이 있으면 강조하고, 결제한 수량 아래로는 줄일 수 없다.
+function menuCard(item, s) {
+  const qty = s.quantities[item.id] || 0;
+  const paid = s.paidQuantities[item.id] || 0;
+  return `<div class="menu-card ${qty ? 'picked' : ''}">
+    <div class="menu-name">${esc(item.name)}</div>
+    <div class="menu-price">${won(item.price)}${paid ? ` · 결제 ${paid}` : ''}</div>
+    <div class="counter">
+      <button class="step" data-action="dec" data-key="${esc(item.id)}" ${qty <= paid ? 'disabled' : ''} aria-label="${esc(item.name)} 빼기">−</button>
+      <span class="qty" aria-label="${esc(item.name)} 수량">${qty}</span>
+      <button class="step" data-action="inc" data-key="${esc(item.id)}" aria-label="${esc(item.name)} 담기">+</button>
+    </div>
+  </div>`;
+}
+
 function roomDetailView(roomId) {
   const room = roomById(roomId);
   const s = state.sessions[roomId];
   const items = state.settings.items.filter((i) => i.active || (s.quantities[i.id] || 0) > 0);
-  const groups = ['liquor', 'service']
-    .map((cat) => {
-      const list = items.filter((i) => i.category === cat);
-      if (!list.length) return '';
-      return `<section class="card"><h3>${CATEGORY_LABELS[cat]}</h3>
-        ${list.map((i) => counterRow({ label: i.name, sub: won(i.price), key: i.id, qty: s.quantities[i.id] || 0, paid: s.paidQuantities[i.id] || 0 })).join('')}
-      </section>`;
-    })
-    .join('');
-  const balance = balanceOf(room, s);
+  const cats = ['liquor', 'service'].filter((c) => items.some((i) => i.category === c));
+  if (!cats.includes(ui.category)) ui.category = cats[0] || 'liquor';
+  const unpaid = unpaidLines(s, room, state.settings.items);
+  const balance = sumLines(unpaid);
+  const unpaidCount = unpaid.reduce((a, l) => a + l.qty, 0);
   return `
     <div class="detail-head">
       <button class="link" data-action="back">‹ 룸 목록</button>
-      <h2>${esc(room.name)}</h2>
-      <p class="muted">시작 ${fmtTime(s.startedAt)} · ${elapsedText(s.startedAt)} 경과</p>
+      <div class="row-between"><h2>${esc(room.name)}</h2>
+        <span class="muted">${fmtTime(s.startedAt)} 입장 · ${elapsedText(s.startedAt)}</span></div>
     </div>
-    <section class="card"><h3>룸 이용</h3>
+    <section class="card time-card">
       ${counterRow({ label: '이용 시간', sub: `시간당 ${won(room.hourlyRate)}`, key: HOURS_KEY, qty: s.hours, paid: s.paidHours })}
     </section>
-    ${groups || '<p class="empty">판매 중인 품목이 없습니다. 설정 탭에서 추가해 주세요.</p>'}
-    <div class="detail-footer">
-      <div class="room-money">
-        <span>결제 완료 <b>${won(sessionPaid(s))}</b></span>
-        <span>미결제 <b class="${balance ? 'balance' : ''}">${won(balance)}</b></span>
+    ${cats.length ? `
+      <div class="chips" role="tablist" aria-label="메뉴 분류">
+        ${cats.map((c) => `<button role="tab" class="chip" aria-selected="${ui.category === c}" data-action="category" data-category="${c}">${CATEGORY_LABELS[c]}</button>`).join('')}
+      </div>
+      <div class="menu-grid">${items.filter((i) => i.category === ui.category).map((i) => menuCard(i, s)).join('')}</div>`
+    : '<p class="empty">판매 중인 품목이 없습니다. 관리 탭에서 추가해 주세요.</p>'}
+    <div class="order-bar">
+      <div class="order-sum">
+        <span>${balance ? `미결제 ${unpaidCount}개` : '미결제 없음'} · 결제 ${won(sessionPaid(s))}</span>
+        <b>${won(balance)}</b>
       </div>
       <div class="actions">
         <button class="btn" data-action="end-room">종료</button>
-        <button class="btn primary" data-action="open-payment" ${balance > 0 ? '' : 'disabled'}>결제</button>
+        <button class="btn primary grow" data-action="open-payment" ${balance > 0 ? '' : 'disabled'}>결제하기</button>
       </div>
     </div>`;
 }
@@ -226,16 +248,20 @@ function paymentSummary(base, method, discountText) {
 function paymentSheet() {
   const { roomId, method, discountText, endAfter } = ui.payment;
   const room = roomById(roomId);
-  const lines = unpaidLines(state.sessions[roomId], room, state.settings.items);
+  const s = state.sessions[roomId];
+  const lines = unpaidLines(s, room, state.settings.items);
   const base = sumLines(lines);
+  const paid = sessionPaid(s);
   return `<div class="sheet-backdrop">
     <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pay-title">
+      <div class="sheet-grip" aria-hidden="true"></div>
       <h2 id="pay-title">${esc(room.name)} 결제</h2>
+      ${paid ? `<p class="muted">앞서 결제한 금액 ${won(paid)} · 아래는 이번에 받을 주문입니다.</p>` : ''}
       ${endAfter ? '<p class="warn">미결제 금액이 있습니다. 결제하면 룸을 종료합니다.</p>' : ''}
       ${linesTable(lines)}
-      <div class="segmented" role="radiogroup" aria-label="결제수단">
-        <button role="radio" aria-checked="${method === 'cash'}" data-action="pay-method" data-method="cash">현금</button>
-        <button role="radio" aria-checked="${method === 'card'}" data-action="pay-method" data-method="card">카드 (+${CARD_SURCHARGE_PERCENT}%)</button>
+      <div class="segmented big" role="radiogroup" aria-label="결제수단">
+        <button role="radio" aria-checked="${method === 'cash'}" data-action="pay-method" data-method="cash">현금<small>판매액 그대로</small></button>
+        <button role="radio" aria-checked="${method === 'card'}" data-action="pay-method" data-method="card">카드<small>+${CARD_SURCHARGE_PERCENT}% 가산</small></button>
       </div>
       <label class="field"><span>할인 금액(원)</span>
         <input id="discount" data-input="discount" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(discountText)}">
@@ -255,12 +281,12 @@ function linesTable(lines) {
   </tbody></table>`;
 }
 
-function historyView() {
+function historySection() {
   const list = [...state.payments].reverse();
-  if (!list.length) return '<p class="empty">이번 영업일 결제 내역이 없습니다.</p>';
-  const total = list.reduce((a, p) => a + p.amount, 0);
-  return `<div class="card summary-line"><span>결제 ${list.length}건</span><b>${won(total)}</b></div>
-    ${list.map((p) => `<details class="card payment">
+  return `<section class="card">
+    <h3>결제 내역 ${list.length ? `(${list.length}건)` : ''}</h3>
+    ${list.length ? '' : '<p class="muted">이번 영업일 결제가 아직 없습니다.</p>'}
+    ${list.map((p) => `<details class="payment">
       <summary>
         <span>${fmtTime(p.paidAt)} · ${esc(p.roomName)}</span>
         <span class="badge ${p.method}">${METHOD_LABELS[p.method]}</span>
@@ -273,7 +299,8 @@ function historyView() {
         ${p.discount ? `<div><dt>할인</dt><dd>−${won(p.discount)}</dd></div>` : ''}
         <div class="grand"><dt>받은 금액</dt><dd>${won(p.amount)}</dd></div>
       </dl>
-    </details>`).join('')}`;
+    </details>`).join('')}
+  </section>`;
 }
 
 // 마감 기록(DB 컬럼 형식)의 매상 구조
@@ -304,7 +331,8 @@ function closeBreakdown(r) {
     </details>` : ''}`;
 }
 
-function closeView() {
+// 매출 탭: 이번 영업일 요약 → 일 마감 → 결제 내역 → 지난 마감
+function salesView() {
   const preview = buildCloseRecord({
     id: state.businessDay.id,
     openedAt: state.businessDay.openedAt,
@@ -329,6 +357,7 @@ function closeView() {
       <p>서버에 올리지 못한 마감 ${pending.length}건이 휴대폰에 있습니다: ${pending.map((p) => esc(p.business_date)).join(', ')}</p>
       <button class="btn block" data-action="retry-upload" ${ui.busy ? 'disabled' : ''}>다시 업로드</button>
     </section>` : ''}
+    ${historySection()}
     <section class="card">
       <div class="row-between"><h3>지난 마감</h3>
         <button class="btn small" data-action="load-past" ${ui.busy ? 'disabled' : ''}>불러오기</button></div>
@@ -424,7 +453,7 @@ const actions = {
   },
   'start-room': (el) => {
     const stale = staleBusinessDate();
-    if (stale && !confirm(`${stale} 영업이 아직 마감되지 않았습니다.\n지금 시작하면 이 손님 매출도 ${stale} 매출로 기록됩니다.\n\n그래도 시작할까요? (취소 후 마감 탭에서 먼저 마감할 수 있습니다)`)) {
+    if (stale && !confirm(`${stale} 영업이 아직 마감되지 않았습니다.\n지금 시작하면 이 손님 매출도 ${stale} 매출로 기록됩니다.\n\n그래도 시작할까요? (취소 후 매출 탭에서 먼저 마감할 수 있습니다)`)) {
       return;
     }
     const now = new Date().toISOString();
@@ -437,9 +466,14 @@ const actions = {
   'open-room': (el) => {
     ui.roomId = el.dataset.room;
     render();
+    window.scrollTo(0, 0);
   },
   back: () => {
     ui.roomId = null;
+    render();
+  },
+  category: (el) => {
+    ui.category = el.dataset.category;
     render();
   },
   inc: (el) => updateCount(el.dataset.key, 1),
@@ -584,11 +618,11 @@ async function closeDay() {
 async function uploadPending() {
   if (ui.busy || !state.pendingUploads.length) return;
   if (!api.isServerConfigured()) {
-    notify(`${ui.notice} 서버가 설정되지 않아 업로드하지 않았습니다(마감 탭에 보관).`.trim());
+    notify(`${ui.notice} 서버가 설정되지 않아 업로드하지 않았습니다(매출 탭에 보관).`.trim());
     return;
   }
   if (!state.pin) {
-    notify('서버 업로드에 PIN이 필요합니다. 설정 탭에서 매장 PIN을 입력해 주세요.');
+    notify('서버 업로드에 PIN이 필요합니다. 관리 탭에서 매장 PIN을 입력해 주세요.');
     return;
   }
   ui.busy = true;
@@ -609,7 +643,7 @@ async function uploadPending() {
   state.pendingUploads = state.pendingUploads.filter((p) => !done.includes(p.id));
   ui.busy = false;
   if (error) {
-    ui.notice = `마감 업로드 실패: ${error} (휴대폰에 보관 중이며 마감 탭에서 다시 올릴 수 있습니다)`;
+    ui.notice = `마감 업로드 실패: ${error} (휴대폰에 보관 중이며 매출 탭에서 다시 올릴 수 있습니다)`;
   } else {
     ui.notice = `마감 ${done.length}건을 서버에 저장했습니다.${sameDate ? ' 같은 날짜의 마감이 이미 있어 별도 건으로 저장했습니다.' : ''}`;
   }
