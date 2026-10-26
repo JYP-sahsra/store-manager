@@ -1,0 +1,10 @@
+﻿{
+  "name": "store-manager",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev-server.js",
+    "test": "node --test",
+    "icons": "node scripts/make-icons.js"
+  }
+}

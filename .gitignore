@@ -1,0 +1,7 @@
+node_modules/
+.DS_Store
+Thumbs.db
+# 휴대폰/PC에서 내려받은 백업·마감 파일은 실제 매출 데이터라 저장소에 올리지 않는다.
+store-backup-*.json
+store-close-*.json
+.claude/settings.local.json
