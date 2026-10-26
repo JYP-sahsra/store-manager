@@ -159,6 +159,7 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .entry-time { color: var(--muted); font-size: .9rem; }
 .entry-time b { color: var(--text); font-size: 1.05rem; }
 .guest-head + .counter-row { border-top: 0; }
+.cancel-room { margin: 8px 0 2px; color: var(--danger); border-color: var(--danger); background: transparent; }
 .guest-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .guest-head h3 { margin: 0; }
 .room-money { display: flex; justify-content: space-between; gap: 8px; font-size: .95rem; }

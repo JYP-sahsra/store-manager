@@ -20,7 +20,6 @@ import {
   withTimeOfDay,
   guestSummary,
   changeGuests,
-  changeDeclined,
   CATEGORY_LABELS,
   METHOD_LABELS,
   HOURS_KEY,
@@ -291,25 +290,21 @@ function serviceCard(svc, no, now) {
   </div>`;
 }
 
-// 방문 인원과 이용안함(이탈) 관리. 대기 = 방문 − 서비스 적용 − 이용안함. 금액에는 영향 없음.
+// 방문 인원 관리(대기 = 방문 − 서비스 적용, 금액에는 영향 없음)와 룸 이용안함(손님 이탈 → 룸 비우기)
 function guestCard(s) {
   const g = guestSummary(s);
-  const stepper = (action, value, label, decDisabled, incDisabled) => `<div class="counter">
-      <button class="step" data-action="${action}" data-delta="-1" ${decDisabled ? 'disabled' : ''} aria-label="${label} 줄이기">−</button>
-      <span class="qty">${value}</span>
-      <button class="step" data-action="${action}" data-delta="1" ${incDisabled ? 'disabled' : ''} aria-label="${label} 늘리기">+</button>
-    </div>`;
   return `<section class="card guest-card">
     <div class="guest-head"><h3>방문 인원</h3><span class="guest-badge ${g.status}">${GUEST_STATUS_LABELS[g.status]}</span></div>
     <div class="counter-row">
       <div class="counter-label"><span>방문 ${g.guests}명</span>
-        <small>서비스 적용 ${g.applied} · 대기 ${g.waiting} · 이용안함 ${g.declined}</small></div>
-      ${stepper('guests', g.guests, '방문 인원', g.guests <= g.applied + g.declined, false)}
+        <small>서비스 적용 ${g.applied} · 대기 ${g.waiting}</small></div>
+      <div class="counter">
+        <button class="step" data-action="guests" data-delta="-1" ${g.guests <= g.applied + g.declined ? 'disabled' : ''} aria-label="방문 인원 줄이기">−</button>
+        <span class="qty">${g.guests}</span>
+        <button class="step" data-action="guests" data-delta="1" aria-label="방문 인원 늘리기">+</button>
+      </div>
     </div>
-    <div class="counter-row">
-      <div class="counter-label"><span>이용안함</span><small>서비스를 받지 않거나 먼저 나간 고객</small></div>
-      ${stepper('declined', g.declined, '이용안함 인원', g.declined === 0, g.waiting === 0)}
-    </div>
+    <button class="btn block cancel-room" data-action="room-cancel">이용안함 · 룸 비우기</button>
   </section>`;
 }
 
@@ -656,7 +651,22 @@ const actions = {
     render();
   },
   guests: (el) => updateSession((s) => changeGuests(s, Number(el.dataset.delta))),
-  declined: (el) => updateSession((s) => changeDeclined(s, Number(el.dataset.delta))),
+  // 손님이 이용하지 않고 나간 경우: 담은 주문(미결제)은 취소하고 룸을 비운다. 이미 받은 결제는 매출에 그대로 남는다.
+  'room-cancel': () => {
+    const room = roomById(ui.roomId);
+    const s = state.sessions[room.id];
+    const paid = sessionPaid(s);
+    const balance = balanceOf(room, s);
+    const detail = [
+      balance ? `미결제 ${won(balance)}는 취소됩니다.` : '',
+      paid ? `이미 받은 ${won(paid)}는 매출에 그대로 남습니다.` : '',
+    ].filter(Boolean).join('\n');
+    if (!confirm(`${room.name}을(를) 이용안함으로 처리하고 비울까요?${detail ? `\n\n${detail}` : ''}`)) return;
+    state.sessions[room.id] = null;
+    ui.roomId = null;
+    ui.notice = `${room.name}을(를) 이용안함으로 비웠습니다.`;
+    commit();
+  },
   'svc-add': (el) => updateSession((s) => addService(s, el.dataset.item, new Date().toISOString(), newId())),
   'svc-inc': (el) => updateSession((s) => changeServiceHours(s, el.dataset.id, 1)),
   'svc-dec': (el) => updateSession((s) => changeServiceHours(s, el.dataset.id, -1)),
