@@ -29,7 +29,8 @@
 - 룸 이용 시간은 입장~종료 전체 총시간이며 서비스 시간과 별개다. 룸 타일에는 룸 경과 시간 대신 입장 시각과 서비스 인원별 경과 시간을 보여 준다.
 - 방문 인원(`guests`): 대기 = 방문 − 서비스 건수(− `declined`, 현재 화면에서 입력하지 않아 항상 0). 현황 상태 `guestSummary` = none/waiting/partial/all. 금액과 무관한 운영 정보이며 일 마감 기록(서버)에는 들어가지 않는다.
 - 룸 상태(`calc.roomStatus`, 룸 운영의 핵심은 시간제 서비스): 서비스 초과 'over'(추가 결제 필요, 결제를 마쳤어도) > 미결제 'due' > 종료 임박 'check'(확인 필요) > 주문 전 'fresh' > 대기 인원 'waiting' > 'normal'(정상 진행중). 타일에는 서비스 인원별 남은/초과 시간 칩을 둔다.
-- 초과 추가 금액(`overtimeCharge`): 초과 서비스마다 올림(초과 분/60, 최소 1) × 시간당 단가. 타일 표시용 예상 금액이며 실제 청구는 서비스 시간을 늘려 결제한다.
+- 초과 자동 청구: 종료 시각을 넘긴 서비스는 `overtimeHours`(올림(초과 분/60), 최소 1)만큼 `unpaidLines`에 자동 포함(줄에 `overtimeHours` 표시). 저장된 `hours`는 그대로 두고, 결제 시 `markSessionPaid(session, now)`가 hours를 늘려 확정한다. 두 함수에 같은 `now`를 넘긴다. `overtimeCharge` = 미결제에 포함된 초과 금액(표시용).
+- 룸 타일 식음료 표시: `drinkCounts` = 식음료 품목별 누적 수량(결제 여부 무관).
 - 룸 이용안함: 기타 서비스가 하나라도 있으면 불가(버튼 숨김 + 동작에서도 차단). [이용안함 · 룸 비우기] 버튼으로 확인 후 세션을 비운다. 미결제 주문은 취소, 이미 받은 결제는 매출에 남는다. 이용안함 건수는 따로 기록하지 않는다.
 - 미결제 잔액이 있으면 룸을 종료할 수 없다(결제 후 종료).
 - 이용 중인 룸이 있으면 일 마감을 할 수 없다.
@@ -44,7 +45,7 @@
 - localStorage 키 `storeManager.v1`, `version: 1`. 구조를 바꾸면 version을 올리고 `normalizeState`에 변환 코드를 추가한다.
 - 설정(`settings`)은 `settingsVersion`(현재 2)을 가진다. v1(필드 없음)의 `dayCutoffHour: 0`은 12로 옮긴다(`normalizeSettings`). 서버 `store_settings.data`도 같은 형식.
 - 세션(`sessions.roomN`): `id, startedAt, hours, quantities, paidHours, paidQuantities, guests, declined, services[{id, itemId, startedAt, hours, paidHours}]` (`services`가 없던 예전 데이터는 빈 목록으로 정규화)
-- 결제(`payments[]`): `id, roomId, roomName, sessionId, paidAt, method('cash'|'card'), lines[{kind('room'|'liquor'|'service'), itemId, name, unitPrice, qty, subtotal, serviceId?, startedAt?}], coveredBase, base, surcharge, discount, amount` (시간제 서비스 줄은 qty = 시간)
+- 결제(`payments[]`): `id, roomId, roomName, sessionId, paidAt, method('cash'|'card'), lines[{kind('room'|'liquor'|'service'), itemId, name, unitPrice, qty, subtotal, serviceId?, startedAt?, overtimeHours?}], coveredBase, base, surcharge, discount, amount` (시간제 서비스 줄은 qty = 시간)
 - 일 마감 기록: `buildCloseRecord()` 결과 = DB `day_closes` 컬럼(snake_case). 필드를 바꾸면 `schema.sql`의 `submit_day_close`도 같이 바꾼다.
 - 백업 파일: `{ app: 'store-manager', exportedAt, state(PIN 제외), close }`
 

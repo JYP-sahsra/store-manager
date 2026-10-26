@@ -25,8 +25,9 @@ function makeLine(kind, itemId, name, unitPrice, qty) {
 }
 
 // 직전 결제 이후 아직 결제하지 않은 수량·시간만 결제 대상 줄로 만든다.
-// 시간제 서비스는 1인 1건이며 금액 = 시간당 단가 × 시간.
-export function unpaidLines(session, room, items) {
+// 시간제 서비스는 1인 1건이며 금액 = 시간당 단가 × 시간. 종료 시각을 넘긴 서비스는 초과분(1시간 단위 올림)을
+// 자동으로 포함한다(overtimeHours). 결제하면 markSessionPaid가 서비스 시간을 그만큼 늘려 확정한다.
+export function unpaidLines(session, room, items, now = new Date()) {
   const lines = [];
   const hours = session.hours - session.paidHours;
   if (hours > 0) {
@@ -38,12 +39,24 @@ export function unpaidLines(session, room, items) {
   }
   for (const svc of session.services || []) {
     const item = items.find((i) => i.id === svc.itemId);
-    const unpaid = svc.hours - svc.paidHours;
+    const overtime = overtimeHours(svc, now);
+    const unpaid = svc.hours + overtime - svc.paidHours;
     if (item && unpaid > 0) {
-      lines.push({ ...makeLine('service', item.id, item.name, item.price, unpaid), serviceId: svc.id, startedAt: svc.startedAt });
+      lines.push({
+        ...makeLine('service', item.id, item.name, item.price, unpaid),
+        serviceId: svc.id,
+        startedAt: svc.startedAt,
+        overtimeHours: overtime,
+      });
     }
   }
   return lines;
+}
+
+// 종료 시각을 넘긴 서비스의 초과 시간(1시간 단위 올림). 초과가 아니면 0.
+export function overtimeHours(svc, now = new Date()) {
+  if (serviceStatus(svc, now) !== 'over') return 0;
+  return Math.max(1, Math.ceil(-serviceMinutesLeft(svc, now) / 60));
 }
 
 // ── 시간제 서비스 ──
@@ -66,14 +79,12 @@ export function serviceMinutesLeft(svc, now = new Date()) {
   return Math.ceil((new Date(serviceEndAt(svc)).getTime() - new Date(now).getTime()) / 60000);
 }
 
-// 초과된 서비스를 연장할 때 추가될 금액. 시간은 1시간 단위라 초과 분을 올림해 시간당 단가를 곱한다.
+// 미결제에 자동 포함된 초과 금액(표시용). 시간은 1시간 단위라 초과 분을 올림해 시간당 단가를 곱한다.
 // 예: 시간당 40,000원 서비스가 10분 초과 → 1시간 → 40,000원, 70분 초과 → 2시간 → 80,000원
 export function overtimeCharge(services, items, now = new Date()) {
   return services.reduce((sum, svc) => {
-    if (serviceStatus(svc, now) !== 'over') return sum;
     const item = items.find((i) => i.id === svc.itemId);
-    const overMinutes = -serviceMinutesLeft(svc, now);
-    return sum + (item ? item.price * Math.max(1, Math.ceil(overMinutes / 60)) : 0);
+    return sum + (item ? item.price * overtimeHours(svc, now) : 0);
   }, 0);
 }
 
@@ -193,13 +204,25 @@ export function calcPayment(base, method, discount) {
 }
 
 // 결제가 끝나면 현재 수량까지를 결제 완료로 표시한다.
-export function markSessionPaid(session) {
+// 초과된 서비스는 결제한 초과분만큼 서비스 시간을 늘려 확정한다(unpaidLines와 같은 now를 넘긴다).
+export function markSessionPaid(session, now = new Date()) {
   return {
     ...session,
     paidHours: session.hours,
     paidQuantities: { ...session.quantities },
-    services: (session.services || []).map((s) => ({ ...s, paidHours: s.hours })),
+    services: (session.services || []).map((s) => {
+      const hours = s.hours + overtimeHours(s, now);
+      return { ...s, hours, paidHours: hours };
+    }),
   };
+}
+
+// 식음료 품목별로 지금까지 나간 수량(결제 여부와 무관, 수량 많은 순)
+export function drinkCounts(session, items) {
+  return items
+    .filter((i) => i.category === 'liquor' && (session.quantities[i.id] || 0) > 0)
+    .map((i) => ({ name: i.name, qty: session.quantities[i.id] }))
+    .sort((a, b) => b.qty - a.qty);
 }
 
 // 결제한 수량 아래로는 줄일 수 없다(환불은 범위 밖).

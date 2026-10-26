@@ -25,6 +25,8 @@ import {
   changeDeclined,
   roomStatus,
   overtimeCharge,
+  overtimeHours,
+  drinkCounts,
 } from '../js/calc.js';
 
 const room = { id: 'room1', name: '1번 룸', hourlyRate: 30000 };
@@ -84,7 +86,8 @@ test('시간제 서비스: 1인 1건, 단가 × 시간, 서로 다른 시작 시
   s = addService(s, 'svc', new Date(2026, 9, 26, 21, 0).toISOString(), 'a');
   s = addService(s, 'svc', new Date(2026, 9, 26, 21, 30).toISOString(), 'b');
   s = changeServiceHours(s, 'a', 1); // a: 2시간, b: 1시간
-  const lines = unpaidLines(s, room, all).filter((l) => l.kind === 'service');
+  const T = new Date(2026, 9, 26, 21, 40); // 아직 초과 전인 기준 시각(실행 날짜와 무관하게 고정)
+  const lines = unpaidLines(s, room, all, T).filter((l) => l.kind === 'service');
   assert.deepEqual(lines.map((l) => [l.serviceId, l.qty, l.subtotal]), [['a', 2, 80000], ['b', 1, 40000]]);
   assert.ok(lines[0].startedAt);
 
@@ -92,12 +95,12 @@ test('시간제 서비스: 1인 1건, 단가 × 시간, 서로 다른 시작 시
   const extra = addService(s, 'svc', new Date().toISOString(), 'c');
   assert.deepEqual(removeService(extra, 'c').services.map((v) => v.id), ['a', 'b']);
 
-  s = markSessionPaid(s);
-  assert.equal(sumLines(unpaidLines(s, room, all)), 0);
+  s = markSessionPaid(s, T);
+  assert.equal(sumLines(unpaidLines(s, room, all, T)), 0);
   assert.equal(changeServiceHours(s, 'b', -1), s); // 결제한 시간 아래로 못 줄임
   assert.equal(removeService(s, 'b'), s); // 결제 기록이 있으면 못 지움
   s = changeServiceHours(s, 'b', 1);
-  assert.deepEqual(unpaidLines(s, room, all).map((l) => [l.serviceId, l.qty]), [['b', 1]]);
+  assert.deepEqual(unpaidLines(s, room, all, T).map((l) => [l.serviceId, l.qty]), [['b', 1]]);
 });
 
 test('시간제 서비스 종료 예정 시각과 상태(10분 전 강조, 지나면 초과)', () => {
@@ -165,6 +168,32 @@ test('초과 추가 예정 금액: 초과 분을 시간 단위로 올림 × 시�
   // a: 10분 초과 → 1시간, b: 70분 초과 → 2시간
   assert.equal(overtimeCharge(services, svcItems, now), 40000 + 80000);
   assert.equal(overtimeCharge(services, svcItems, new Date(2026, 9, 26, 20, 30)), 0);
+});
+
+test('초과분은 미결제에 자동 포함되고, 결제하면 서비스 시간이 늘어 초과가 풀린다', () => {
+  const svcItems = [{ id: 'svc', name: '도우미', category: 'service', price: 40000 }];
+  const now = new Date(2026, 9, 26, 22, 10);
+  let s = addService(emptySession(), 'svc', new Date(2026, 9, 26, 21, 0).toISOString(), 'a');
+  // 결제 안 한 1시간 + 10분 초과 → 2시간분 80,000원(초과 1시간 포함)
+  const lines = unpaidLines(s, room, svcItems, now);
+  assert.deepEqual(lines.map((l) => [l.qty, l.subtotal, l.overtimeHours]), [[2, 80000, 1]]);
+  s = markSessionPaid(s, now);
+  assert.deepEqual([s.services[0].hours, s.services[0].paidHours], [2, 2]);
+  assert.equal(serviceStatus(s.services[0], now), 'running'); // 23:00까지 연장됨
+  assert.equal(sumLines(unpaidLines(s, room, svcItems, now)), 0);
+
+  // 결제한 1시간이 70분 초과 → 초과 2시간만 미결제
+  let p = markSessionPaid(addService(emptySession(), 'svc', new Date(2026, 9, 26, 20, 0).toISOString(), 'b'), new Date(2026, 9, 26, 20, 30));
+  assert.equal(overtimeHours(p.services[0], now), 2);
+  assert.equal(sumLines(unpaidLines(p, room, svcItems, now)), 80000);
+});
+
+test('식음료 나간 수량(결제 여부와 무관, 많은 순)', () => {
+  let s = changeCount(changeCount(changeCount(emptySession(), 'beer', 1), 'beer', 1), 'fruit', 1);
+  s = markSessionPaid(s);
+  s = changeCount(s, 'beer', 1);
+  const list = [...items, { id: 'soju', name: '소주', category: 'liquor', price: 6000 }];
+  assert.deepEqual(drinkCounts(changeCount(s, 'soju', 1), list), [{ name: '맥주', qty: 3 }, { name: '소주', qty: 1 }]);
 });
 
 test('서비스 경과 시간(분)', () => {

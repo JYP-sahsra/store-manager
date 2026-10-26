@@ -206,8 +206,12 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .room-money dt { font-size: .75rem; color: var(--muted); }
 .room-money dd { margin: 0; font-weight: 800; font-variant-numeric: tabular-nums; }
 .room-money .due dd { color: var(--accent); }
-.room-money .extra { background: var(--danger); }
-.room-money .extra dt, .room-money .extra dd { color: #fff; }
+.room-money .extra { background: var(--danger); grid-column: span 1; }
+.drink-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 10px; font-size: .9rem; }
+.drink b { font-variant-numeric: tabular-nums; }
+.ot { color: var(--danger); font-weight: 700; }
+.room-money .extra dt, .room-money .extra dd, .room-money .extra small { color: #fff; }
+.room-money small { display: block; font-size: .75rem; font-weight: 700; }
 @media (prefers-color-scheme: dark) { .room-money div { background: rgb(0 0 0 / .25); } }
 .cancel-note { margin: 8px 0 2px; font-size: .85rem; }
 .badge.due { background: var(--accent); color: var(--primary-text); }

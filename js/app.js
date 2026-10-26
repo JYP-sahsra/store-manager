@@ -22,6 +22,8 @@ import {
   changeGuests,
   roomStatus,
   overtimeCharge,
+  overtimeHours,
+  drinkCounts,
   CATEGORY_LABELS,
   METHOD_LABELS,
   HOURS_KEY,
@@ -199,16 +201,18 @@ function roomCard(room) {
     `입장 <b>${fmtTime12(s.startedAt)}</b>`,
     g.guests ? `방문 <b>${g.guests}명</b>${g.waiting ? ` · <b class="wait">대기 ${g.waiting}</b>` : ''}` : '방문 인원 미입력',
   ].join('<span class="sep">·</span>');
-  const extra = status === 'over' ? overtimeCharge(services, state.settings.items, now) : 0;
+  const extra = overtimeCharge(services, state.settings.items, now); // 미결제에 이미 포함된 초과분
+  const drinks = drinkCounts(s, state.settings.items);
   return `<button class="room-tile st-${status}" data-action="open-room" data-room="${room.id}">
     <div class="room-head"><h2>${esc(room.name)}</h2>
       <span class="status-badge st-${status}">${ROOM_STATUS_LABELS[status](g)}</span></div>
     <div class="room-meta">${meta}</div>
     ${services.length ? `<div class="svc-grid">${services.map((v, i) => serviceTimeChip(v, i + 1, now)).join('')}</div>` : ''}
+    ${drinks.length ? `<div class="drink-line"><span class="muted">식음료</span>${drinks.map((d) => `<span class="drink">${esc(d.name)} <b>${d.qty}</b></span>`).join('')}</div>` : ''}
     <dl class="room-money">
       <div><dt>결제 완료</dt><dd>${won(paid)}</dd></div>
-      <div class="${balance ? 'due' : ''}"><dt>미결제</dt><dd>${won(balance)}</dd></div>
-      ${extra ? `<div class="extra"><dt>초과 추가</dt><dd>+${won(extra)}</dd></div>` : ''}
+      <div class="${extra ? 'extra' : balance ? 'due' : ''}"><dt>미결제</dt><dd>${won(balance)}</dd>
+        ${extra ? `<small>초과 ${won(extra)} 포함</small>` : ''}</div>
     </dl>
   </button>`;
 }
@@ -280,7 +284,8 @@ function serviceCard(svc, no, now) {
     </div>
     <div class="counter-row svc-hours">
       <div class="counter-label"><span>${svc.hours}시간 · ${won((item?.price || 0) * svc.hours)}</span>
-        <small>${svc.paidHours ? `결제 ${svc.paidHours}시간` : '미결제'}</small></div>
+        <small>${svc.paidHours ? `결제 ${svc.paidHours}시간` : '미결제'}</small>
+        ${overtimeHours(svc, now) ? `<small class="ot">초과 ${overtimeHours(svc, now)}시간(${won((item?.price || 0) * overtimeHours(svc, now))}) 미결제에 포함 · 결제하면 연장</small>` : ''}</div>
       <div class="counter">
         <button class="step" data-action="svc-dec" data-id="${esc(svc.id)}" ${svc.hours <= svc.paidHours ? 'disabled' : ''} aria-label="${no}번 서비스 1시간 줄이기">−</button>
         <span class="qty">${svc.hours}</span>
@@ -421,7 +426,7 @@ function paymentSheet() {
 function linesTable(lines) {
   return `<table class="lines"><tbody>
     ${lines.map((l) => `<tr>
-      <td>${esc(l.name)}${l.startedAt ? ` <small class="muted">${fmtTime(l.startedAt)}~</small>` : ''}</td>
+      <td>${esc(l.name)}${l.startedAt ? ` <small class="muted">${fmtTime(l.startedAt)}~</small>` : ''}${l.overtimeHours ? ` <small class="ot">초과 ${l.overtimeHours}시간 포함</small>` : ''}</td>
       <td class="num">${won(l.unitPrice)} × ${l.qty}${l.kind === 'room' || l.serviceId ? '시간' : ''}</td>
       <td class="num">${won(l.subtotal)}</td></tr>`).join('')}
   </tbody></table>`;
@@ -757,7 +762,9 @@ function confirmPayment() {
   const { roomId, method, discountText, endAfter } = ui.payment;
   const room = roomById(roomId);
   const s = state.sessions[roomId];
-  const lines = unpaidLines(s, room, state.settings.items);
+  // 초과분 계산과 서비스 시간 확정에 같은 시각을 써서 결제 금액과 연장 시간이 어긋나지 않게 한다.
+  const now = new Date();
+  const lines = unpaidLines(s, room, state.settings.items, now);
   const base = sumLines(lines);
   if (base === 0) return;
   let result;
@@ -772,13 +779,13 @@ function confirmPayment() {
     roomId,
     roomName: room.name,
     sessionId: s.id,
-    paidAt: new Date().toISOString(),
+    paidAt: now.toISOString(),
     method,
     lines,
     coveredBase: base,
     ...result,
   });
-  state.sessions[roomId] = markSessionPaid(s);
+  state.sessions[roomId] = markSessionPaid(s, now);
   ui.payment = null;
   ui.notice = `${room.name} ${METHOD_LABELS[method]} ${won(result.amount)} 결제했습니다.`;
   if (endAfter) {
