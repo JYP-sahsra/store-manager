@@ -23,6 +23,7 @@ import {
   guestSummary,
   changeGuests,
   changeDeclined,
+  roomStatus,
 } from '../js/calc.js';
 
 const room = { id: 'room1', name: '1번 룸', hourlyRate: 30000 };
@@ -138,6 +139,17 @@ test('방문 인원이 모자라면 서비스 추가 때 함께 늘고, 전원 �
   const legacy = { ...emptySession(), services: [{ id: 'x' }, { id: 'y' }] };
   assert.deepEqual(guestSummary(legacy), { guests: 2, applied: 2, declined: 0, waiting: 0, status: 'all' });
   assert.equal(changeGuests(legacy, 1).guests, 3);
+});
+
+test('룸 상태: 서비스 초과가 가장 우선, 종료 임박은 확인 필요, 결제 완료 + 전원 적용만 정상 진행중', () => {
+  const g = (waiting) => ({ waiting });
+  const st = (balance, paid, waiting, states) => roomStatus({ balance, paid, guest: g(waiting), serviceStates: states });
+  assert.equal(st(0, 100000, 0, ['over', 'running']), 'over'); // 결제를 마쳤어도 초과면 추가 결제 필요
+  assert.equal(st(40000, 100000, 0, ['ending']), 'due');
+  assert.equal(st(0, 100000, 0, ['ending', 'running']), 'check');
+  assert.equal(st(0, 0, 3, []), 'fresh');
+  assert.equal(st(0, 100000, 1, ['running']), 'waiting');
+  assert.equal(st(0, 100000, 0, ['running', 'running']), 'normal');
 });
 
 test('서비스 경과 시간(분)', () => {

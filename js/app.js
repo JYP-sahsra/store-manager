@@ -20,6 +20,7 @@ import {
   withTimeOfDay,
   guestSummary,
   changeGuests,
+  roomStatus,
   CATEGORY_LABELS,
   METHOD_LABELS,
   HOURS_KEY,
@@ -98,11 +99,6 @@ const GUEST_STATUS_LABELS = {
   all: '전원 적용중',
   declined: '서비스 이용안함',
 };
-function guestCounts(g) {
-  return [`방문 ${g.guests}명`, g.applied && `적용 ${g.applied}`, g.waiting && `대기 ${g.waiting}`, g.declined && `이용안함 ${g.declined}`]
-    .filter(Boolean)
-    .join(' · ');
-}
 
 // '12,000' 같은 입력을 정수로. 빈 값은 emptyValue, 숫자가 아니면 NaN.
 function parseWon(text, emptyValue = 0) {
@@ -195,19 +191,19 @@ function roomCard(room) {
   const balance = balanceOf(room, s);
   const paid = sessionPaid(s);
   const g = guestSummary(s);
-  const pay = paymentState(balance, paid, g);
-  const alert = urgentServiceStatus(s);
-  return `<button class="room-tile ${pay.tile}" data-action="open-room" data-room="${room.id}">
+  const now = new Date();
+  const services = s.services || [];
+  const status = roomStatus({ balance, paid, guest: g, serviceStates: services.map((v) => serviceStatus(v, now)) });
+  const meta = [
+    `입장 <b>${fmtTime12(s.startedAt)}</b>`,
+    `룸 ${s.hours}시간`,
+    g.guests ? `방문 ${g.guests}명${g.waiting ? ` · <b class="wait">대기 ${g.waiting}</b>` : ''}` : '방문 인원 미입력',
+  ].join('<span class="sep">·</span>');
+  return `<button class="room-tile st-${status}" data-action="open-room" data-room="${room.id}">
     <div class="room-head"><h2>${esc(room.name)}</h2>
-      <div class="room-badges">
-        ${alert ? `<span class="badge alert ${alert}">${alert === 'over' ? '초과 중' : '종료 임박'}</span>` : ''}
-        <span class="badge ${pay.badge}">${pay.label}</span>
-      </div></div>
-    <div class="room-clock"><span>입장</span><b>${fmtTime12(s.startedAt)}</b><span>· 룸 ${s.hours}시간</span></div>
-    <div class="guest-line"><span class="guest-badge ${g.status}">${GUEST_STATUS_LABELS[g.status]}</span>
-      ${g.guests ? `<span class="muted">${guestCounts(g)}</span>` : ''}</div>
-    ${serviceChips(s)}
-    ${serviceAlert(s)}
+      <span class="status-badge st-${status}">${ROOM_STATUS_LABELS[status](g)}</span></div>
+    <div class="room-meta">${meta}</div>
+    ${services.length ? `<div class="svc-grid">${services.map((v, i) => serviceTimeChip(v, i + 1, now)).join('')}</div>` : ''}
     <div class="room-money">
       <span>결제 ${won(paid)}</span>
       ${balance ? `<b>미결제 ${won(balance)}</b>` : ''}
@@ -215,46 +211,25 @@ function roomCard(room) {
   </button>`;
 }
 
-// 결제 상태: 미결제 / 결제 완료 / 주문 전(아직 담은 것도 받은 것도 없음).
-// 결제를 마쳤고 방문 인원 전원에게 서비스가 적용 중이면 '정상 진행중'(초록 타일).
-function paymentState(balance, paid, g) {
-  if (balance) return { tile: 'due', badge: 'due', label: '미결제' };
-  if (!paid) return { tile: 'fresh', badge: '', label: '주문 전' };
-  if (g.status === 'all') return { tile: 'normal', badge: 'normal', label: '정상 진행중' };
-  return { tile: 'paid', badge: 'ok', label: '결제 완료' };
-}
+// 룸 상태(calc.roomStatus) 라벨
+const ROOM_STATUS_LABELS = {
+  over: () => '추가 결제 필요',
+  due: () => '결제 필요',
+  check: () => '확인 필요',
+  fresh: () => '주문 전',
+  waiting: (g) => `서비스 대기 ${g.waiting}명`,
+  normal: () => '정상 진행중',
+};
 
-const STATUS_ORDER = { over: 0, ending: 1, running: 2 };
-
-// 서비스 중 하나라도 초과면 'over', 종료 10분 이내면 'ending', 아니면 null
-function urgentServiceStatus(s) {
-  const now = new Date();
-  const states = (s.services || []).map((v) => serviceStatus(v, now));
-  if (states.includes('over')) return 'over';
-  if (states.includes('ending')) return 'ending';
-  return null;
-}
-
-// 서비스 인원별 경과 시간 칩(시작 후 지난 시간, 상태 색)
-function serviceChips(s) {
-  const now = new Date();
-  const list = s.services || [];
-  if (!list.length) return '';
-  return `<div class="svc-chips"><span class="muted">서비스 경과</span>${list
-    .map((v, i) => `<span class="svc-chip ${serviceStatus(v, now)}">${i + 1}번 ${clock(serviceElapsedMinutes(v, now))}</span>`)
-    .join('')}</div>`;
-}
-
-// 진행 중인 서비스 인원과 가장 급한 종료 예정 시각(초과 > 10분 이내 > 진행 중)
-function serviceAlert(s) {
-  const now = new Date();
-  const list = (s.services || [])
-    .filter((v) => v.hours > 0)
-    .map((v) => ({ v, st: serviceStatus(v, now), end: serviceEndAt(v) }))
-    .sort((a, b) => STATUS_ORDER[a.st] - STATUS_ORDER[b.st] || a.end.localeCompare(b.end));
-  if (!list.length) return '';
-  const top = list[0];
-  return `<div class="svc-alert ${top.st}">서비스 ${list.length}명 · ${fmtTime12(top.end)} 종료 (${leftText(serviceMinutesLeft(top.v, now))})</div>`;
+// 서비스 인원별 시간 칩: 번호, 남은/초과 시간(가장 크게), 종료 예정 시각·경과
+function serviceTimeChip(svc, no, now) {
+  const st = serviceStatus(svc, now);
+  const left = serviceMinutesLeft(svc, now);
+  const abs = Math.abs(left);
+  const amount = abs >= 60 ? clock(abs) : `${abs}분`; // 칩 폭에 맞게 1시간 이상은 1:05처럼 줄인다
+  const main = st === 'idle' ? '시간 미정' : `${amount} ${left <= 0 ? '초과' : '남음'}`;
+  const sub = svc.hours ? `~${fmtTime12(serviceEndAt(svc))} · ${clock(serviceElapsedMinutes(svc, now))} 경과` : '시간을 정해 주세요';
+  return `<div class="svc-time-chip ${st}"><span class="no">${no}번</span><b>${main}</b><small>${sub}</small></div>`;
 }
 
 function counterRow({ label, sub, key, qty, paid }) {

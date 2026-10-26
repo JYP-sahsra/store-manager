@@ -97,6 +97,17 @@ export function guestSummary(session) {
   return { guests, applied, declined, waiting, status };
 }
 
+// 룸 전체 상태. 룸 운영의 핵심은 시간제 서비스이므로 서비스 시간 상태를 결제보다 먼저 본다.
+// 우선순위: 초과(추가 결제 필요) > 미결제(결제 필요) > 종료 임박(확인 필요) > 주문 전 > 서비스 대기 > 정상 진행중
+export function roomStatus({ balance, paid, guest, serviceStates }) {
+  if (serviceStates.includes('over')) return 'over';
+  if (balance > 0) return 'due';
+  if (serviceStates.includes('ending')) return 'check';
+  if (!paid) return 'fresh';
+  if (guest.waiting > 0) return 'waiting';
+  return 'normal';
+}
+
 // 방문 인원은 서비스 적용 + 이용안함 인원보다 적어질 수 없다.
 export function changeGuests(session, delta) {
   const { guests, applied, declined } = guestSummary(session);

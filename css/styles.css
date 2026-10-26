@@ -12,6 +12,8 @@
   --ok: #047857;
   --ok-soft: #dcfce7;
   --danger-soft: #fee2e2;
+  --warn: #a16207;
+  --warn-soft: #fef9c3;
   --idle-soft: #e6eef9;
   --idle-line: #b9cbe6;
   --tile-shadow: 0 2px 8px rgb(15 23 42 / .08);
@@ -34,6 +36,8 @@
     --ok: #34d399;
     --ok-soft: #06301f;
     --danger-soft: #3b1212;
+    --warn: #facc15;
+    --warn-soft: #332a05;
     --idle-soft: #14233a;
     --idle-line: #2c4466;
     --tile-shadow: 0 2px 10px rgb(0 0 0 / .45);
@@ -149,33 +153,48 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .idle-state { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: var(--ok); font-size: .9rem; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; }
 .enter-btn { flex-shrink: 0; min-height: 56px; padding: 0 20px; font-size: 1.05rem; border-radius: 14px; }
-.room-tile.due { background: var(--accent-soft); border-color: var(--accent); }
-.room-tile.paid { border-color: var(--ok); }
-.room-tile.normal { background: var(--ok-soft); border-color: var(--ok); }
-.room-tile.fresh { background: var(--accent-soft); border: 1.5px dashed var(--accent); }
-.room-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-.room-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-.badge.normal { background: var(--ok); color: #fff; }
-.badge.alert { box-shadow: 0 2px 6px rgb(0 0 0 / .25); font-weight: 800; }
-.badge.alert.ending { background: var(--accent); color: #fff; }
-.badge.alert.over { background: var(--danger); color: #fff; animation: pulse 1.6s ease-in-out infinite; }
+/* 룸 상태(calc.roomStatus)별 타일·라벨 색 */
+.room-tile.st-over { background: var(--danger-soft); border: 2px solid var(--danger); padding: 15px; }
+.room-tile.st-due { background: var(--accent-soft); border-color: var(--accent); }
+.room-tile.st-check { background: var(--warn-soft); border: 2px solid var(--warn); padding: 15px; }
+.room-tile.st-fresh { background: var(--surface); border: 1.5px dashed var(--muted); }
+.room-tile.st-waiting { background: var(--accent-soft); border: 1.5px dashed var(--accent); }
+.room-tile.st-normal { background: var(--ok-soft); border-color: var(--ok); }
+.room-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.status-badge {
+  flex-shrink: 0; padding: 5px 12px; border-radius: 999px; font-size: .85rem; font-weight: 800;
+  box-shadow: 0 2px 6px rgb(0 0 0 / .18); background: var(--line); color: var(--muted);
+}
+.status-badge.st-over { background: var(--danger); color: #fff; animation: pulse 1.6s ease-in-out infinite; }
+.status-badge.st-due { background: var(--accent); color: #fff; }
+.status-badge.st-check { background: var(--warn); color: #fff; }
+.status-badge.st-waiting { background: var(--surface); color: var(--accent); border: 1px solid var(--accent); }
+.status-badge.st-normal { background: var(--ok); color: #fff; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 4px var(--danger-soft), 0 2px 6px rgb(0 0 0 / .25); } }
-@media (prefers-reduced-motion: reduce) { .badge.alert.over { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .status-badge.st-over { animation: none; } }
+.room-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; color: var(--muted); font-size: .9rem; margin-bottom: 10px; }
+.room-meta b { color: var(--text); }
+.room-meta .wait { color: var(--accent); }
+.room-meta .sep { color: var(--muted); opacity: .6; }
+.svc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
+.svc-time-chip {
+  display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 0 6px;
+  padding: 7px 10px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line);
+}
+.svc-time-chip .no { font-size: .8rem; color: var(--muted); font-weight: 700; }
+.svc-time-chip b { font-size: 1rem; font-variant-numeric: tabular-nums; }
+.svc-time-chip small { grid-column: 1 / -1; color: var(--muted); font-size: .75rem; }
+.svc-time-chip.ending { background: var(--warn-soft); border-color: var(--warn); }
+.svc-time-chip.ending b { color: var(--warn); }
+.svc-time-chip.over { background: var(--danger); border-color: var(--danger); }
+.svc-time-chip.over b, .svc-time-chip.over .no, .svc-time-chip.over small { color: #fff; }
 .room-head h2 { margin: 0; font-size: 1.25rem; }
-.room-clock { display: flex; align-items: baseline; gap: 6px; margin: 2px 0 8px; }
-.room-clock b { font-size: 1.6rem; font-variant-numeric: tabular-nums; line-height: 1.1; }
-.room-clock span { color: var(--muted); font-size: .85rem; }
 
-.guest-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin-bottom: 8px; font-size: .85rem; }
 .guest-badge { font-size: .8rem; font-weight: 800; padding: 3px 10px; border-radius: 999px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
 .guest-badge.waiting { background: var(--accent); color: var(--primary-text); border-color: var(--accent); }
 .guest-badge.partial { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .guest-badge.all { background: transparent; color: var(--ok); border-color: var(--ok); }
 .guest-badge.declined { color: var(--danger); border-color: var(--danger); }
-.svc-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; font-size: .8rem; }
-.svc-chip { padding: 2px 8px; border-radius: 6px; background: var(--surface); border: 1px solid var(--line); font-weight: 700; font-variant-numeric: tabular-nums; }
-.svc-chip.ending { border-color: var(--accent); color: var(--accent); }
-.svc-chip.over { background: var(--danger); border-color: var(--danger); color: #fff; }
 .entry-time { color: var(--muted); font-size: .9rem; }
 .entry-time b { color: var(--text); font-size: 1.05rem; }
 .guest-head + .counter-row { border-top: 0; }
@@ -221,9 +240,6 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .chip.urgent { border-color: var(--danger); color: var(--danger); }
 .chip.urgent[aria-selected="true"] { background: var(--danger); border-color: var(--danger); color: #fff; }
 
-.svc-alert { font-size: .85rem; font-weight: 700; margin: -2px 0 8px; color: var(--muted); }
-.svc-alert.ending { color: var(--accent); }
-.svc-alert.over { color: var(--danger); }
 
 .svc-add { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px; }
 .svc-add-btn {
