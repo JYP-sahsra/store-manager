@@ -41,6 +41,9 @@ const ui = {
   notice: loaded.warning,
   // 매출 캘린더: data = { source: 'server' | 'local', list }, selected = 펼친 날짜
   calendar: { month: monthOf(new Date()), data: null, loading: false, selected: null },
+  basicOpen: !state.pin, // 관리 탭 기본 정보 펼침(PIN이 없을 때만 처음부터 펼친다)
+  appVersion: '', // 실행 중인 앱 버전(service worker 캐시 이름)
+  updateReady: false, // 새 버전이 준비됐지만 입력 중이라 적용을 미뤘다
   busy: false,
 };
 
@@ -131,6 +134,7 @@ function render() {
     <header class="topbar">
       <h1>${esc(state.settings.storeName || '매장관리')}</h1>
       <span class="muted">${esc(currentBusinessDate())} 영업</span>
+      <button class="btn small sync-btn" data-action="sync" ${ui.busy ? 'disabled' : ''} aria-label="최신 앱과 서버 데이터로 동기화">동기화</button>
     </header>
     ${ui.notice ? `<div class="notice" role="status"><span>${esc(ui.notice)}</span>
       <button class="icon-btn" data-action="dismiss-notice" aria-label="알림 닫기">✕</button></div>` : ''}
@@ -425,13 +429,13 @@ function settingsView() {
     ? `서버 연결 정보 있음${state.settingsDirty ? ' · 서버에 아직 반영되지 않은 변경이 있습니다' : ''}`
     : '서버 미설정 (js/config.js) · 휴대폰에만 저장됩니다';
   return `
-    <section class="card">
-      <h3>기본 정보</h3>
+    <details class="card fold" data-fold="basic" ${ui.basicOpen ? 'open' : ''}>
+      <summary><h3>기본 정보</h3><span class="muted">${esc(d.storeName || '매장명 없음')} · ${esc(d.managerName || '관리자 미입력')} · PIN ${d.pin ? '입력됨' : '없음'}</span></summary>
       <label class="field"><span>매장명</span>${input('storeName', d.storeName, 'autocomplete="off"')}</label>
       <label class="field"><span>관리자 이름 (마감·설정 변경 기록용)</span>${input('managerName', d.managerName, 'autocomplete="off"')}</label>
       <label class="field"><span>매장 PIN (서버 저장용)</span>${input('pin', d.pin, 'type="password" autocomplete="off"')}</label>
       <label class="field"><span>영업일 기준 시각 (0~23시, 이 시각 이전에 시작한 영업은 전날 매출. 기본 12)</span>${input('dayCutoffHour', d.dayCutoffHour, 'inputmode="numeric"')}</label>
-    </section>
+    </details>
     <section class="card">
       <h3>룸 요금</h3>
       ${d.rooms.map((r, i) => `<div class="grid-2">
@@ -467,13 +471,15 @@ function settingsView() {
         <button class="btn" data-action="export-backup">백업 내보내기</button>
         <label class="btn file-btn">백업 가져오기<input type="file" accept="application/json,.json" data-input="import"></label>
       </div>
-    </section>`;
+    </section>
+    <p class="muted center">앱 버전 ${esc(ui.appVersion || '확인 중')}</p>`;
 }
 
 // ── 동작 ─────────────────────────────────────────────
 
 const actions = {
   'dismiss-notice': () => notify(''),
+  sync: () => syncAll(),
   tab: (el) => {
     if (ui.tab === el.dataset.tab && el.dataset.tab === 'rooms') ui.roomId = null;
     ui.tab = el.dataset.tab;
@@ -843,13 +849,94 @@ app.addEventListener('change', (e) => {
   else onInput(e);
 });
 
+// toggle 이벤트는 버블링되지 않아 capture로 받는다. 다시 그려도 접힘 상태를 유지한다.
+app.addEventListener(
+  'toggle',
+  (e) => {
+    if (e.target.dataset?.fold === 'basic') ui.basicOpen = e.target.open;
+  },
+  true,
+);
+
 // 경과 시간 표시를 갱신한다. 입력 중이거나 결제 화면이 열려 있으면 건너뛴다.
+const isEditing = () => Boolean(ui.payment || document.activeElement?.matches('input, select'));
 setInterval(() => {
-  if (ui.tab === 'rooms' && !ui.payment && !document.activeElement?.matches('input, select')) render();
+  if (ui.tab === 'rooms' && !isEditing()) render();
 }, 30000);
 
+// ── 앱 업데이트·동기화 ───────────────────────────────
+
+async function readAppVersion() {
+  try {
+    // 새 버전으로 넘어가는 순간에는 이전 캐시가 잠시 남아 있으므로 가장 높은 번호를 쓴다.
+    const versions = (await caches.keys())
+      .map((k) => /^store-manager-v(\d+)$/.exec(k)?.[1])
+      .filter(Boolean)
+      .map(Number);
+    ui.appVersion = versions.length ? `v${Math.max(...versions)}` : '';
+  } catch {
+    ui.appVersion = '';
+  }
+}
+
+// 새 버전이 활성화되면 다시 불러와 새 화면을 적용한다. 결제·입력 중이면 미룬다.
+function reloadWhenIdle() {
+  if (isEditing()) {
+    ui.updateReady = true;
+    notify('새 버전이 준비됐습니다. 입력을 마친 뒤 [동기화]를 누르면 적용됩니다.');
+    return;
+  }
+  location.reload();
+}
+
+// 최신 앱 확인 → 서버 설정 받기 → 못 올린 마감 업로드 → 매출 캘린더 새로 받기
+async function syncAll() {
+  if (ui.busy) return;
+  if (ui.updateReady) {
+    location.reload();
+    return;
+  }
+  ui.notice = '동기화 중…';
+  render();
+  const reg = await navigator.serviceWorker?.getRegistration?.().catch(() => null);
+  await reg?.update().catch(() => {});
+  if (reg?.installing || reg?.waiting) {
+    notify('새 버전을 받는 중입니다. 잠시 후 자동으로 다시 열립니다.');
+    return;
+  }
+  await syncSettings();
+  await uploadPending();
+  if (ui.tab === 'sales') await loadMonth(ui.calendar.month);
+  else ui.calendar.data = null;
+  if (ui.notice === '동기화 중…') {
+    notify(`동기화했습니다. 최신 앱(${ui.appVersion || '버전 확인 불가'})과 서버 데이터를 사용 중입니다.`);
+  }
+}
+
+// 이미 쓰던 버전이 있을 때 새 버전이 활성화되면 다시 연다(첫 설치 때는 다시 열지 않는다).
+function watchForUpdates(reg) {
+  reg.addEventListener('updatefound', () => {
+    const hadActive = Boolean(reg.active);
+    const worker = reg.installing;
+    worker?.addEventListener('statechange', () => {
+      if (worker.state === 'activated' && hadActive) reloadWhenIdle();
+    });
+  });
+}
+
 if ('serviceWorker' in navigator && window.isSecureContext) {
-  navigator.serviceWorker.register('./sw.js').catch((e) => console.warn('service worker 등록 실패', e));
+  navigator.serviceWorker
+    .register('./sw.js')
+    .then((reg) => watchForUpdates(reg))
+    .then(() => navigator.serviceWorker.ready)
+    .then(readAppVersion)
+    .then(() => ui.tab === 'settings' && render())
+    .catch((e) => console.warn('service worker 등록 실패', e));
+  // 홈 화면 앱은 닫지 않고 다시 열면 새로고침되지 않으므로, 화면에 돌아올 때마다 새 버전을 확인한다.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    navigator.serviceWorker.getRegistration().then((r) => r?.update()).catch(() => {});
+  });
 }
 
 render();

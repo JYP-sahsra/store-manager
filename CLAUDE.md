@@ -11,7 +11,8 @@
 - `js/api.js` — Supabase RPC 호출(fetch). 테이블 직접 접근 금지, `supabase/schema.sql`의 함수만 사용.
 - `js/app.js` — 화면 렌더링(문자열 템플릿 + 이벤트 위임). 사용자 입력 문자열은 `esc()`로 출력한다.
 - `js/config.js` — Supabase URL과 publishable(anon) key만. service_role key 금지.
-- `sw.js` — network-first 캐시. 앱 파일을 추가하거나 이름을 바꾸면 `SHELL` 목록과 `CACHE` 버전을 갱신한다.
+- `sw.js` — network-first 캐시(`fetch(req, { cache: 'no-cache' })`로 Pages의 max-age=600을 건너뛴다). **배포마다 `CACHE` 버전을 올린다** — 관리 탭의 앱 버전 표시와 새 버전 감지에 쓰인다. 앱 파일을 추가하거나 이름을 바꾸면 `SHELL` 목록도 갱신한다.
+- 앱 업데이트: `app.js`의 `watchForUpdates`가 기존 버전이 있을 때 새 SW 활성화를 감지해 다시 연다(결제·입력 중이면 미룸). 화면 복귀(visibilitychange)와 [동기화] 버튼이 `registration.update()`를 호출한다.
 
 ## 명령
 

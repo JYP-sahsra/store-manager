@@ -53,7 +53,15 @@ button, input, select { font: inherit; color: inherit; }
   background: var(--bg);
   border-bottom: 1px solid var(--line);
 }
-.topbar h1 { margin: 0; font-size: 1.15rem; }
+.topbar h1 { margin: 0; font-size: 1.15rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar { align-items: center; }
+.sync-btn { flex-shrink: 0; }
+.center { text-align: center; }
+.fold > summary { display: flex; flex-direction: column; gap: 2px; }
+.fold > summary h3 { margin: 0; }
+.fold > summary::after { position: absolute; right: 14px; top: 14px; }
+.fold { position: relative; }
+.fold[open] > summary { margin-bottom: 10px; }
 
 .content { padding: 12px 16px calc(96px + env(safe-area-inset-bottom)); }
 
