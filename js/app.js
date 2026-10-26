@@ -26,6 +26,7 @@ import {
   SETTINGS_VERSION,
 } from './storage.js';
 import * as api from './api.js';
+import { monthOf, shiftMonth, monthRange, calendarCells, closesByDate, compactWon } from './calendar.js';
 
 const app = document.getElementById('app');
 const loaded = loadState(localStorage);
@@ -38,7 +39,8 @@ const ui = {
   payment: null, // { roomId, method, discountText, endAfter }
   draft: null, // 설정 화면 편집 중인 값
   notice: loaded.warning,
-  pastCloses: null, // { source: 'server' | 'local', list }
+  // 매출 캘린더: data = { source: 'server' | 'local', list }, selected = 펼친 날짜
+  calendar: { month: monthOf(new Date()), data: null, loading: false, selected: null },
   busy: false,
 };
 
@@ -331,7 +333,7 @@ function closeBreakdown(r) {
     </details>` : ''}`;
 }
 
-// 매출 탭: 이번 영업일 요약 → 일 마감 → 결제 내역 → 지난 마감
+// 매출 탭: 이번 영업일 요약 → 일 마감 → 월 매출 캘린더 → 오늘 결제 내역
 function salesView() {
   const preview = buildCloseRecord({
     id: state.businessDay.id,
@@ -343,7 +345,6 @@ function salesView() {
   });
   const active = activeRooms();
   const pending = state.pendingUploads;
-  const past = ui.pastCloses;
   return `
     ${staleWarning()}
     <section class="card">
@@ -352,28 +353,55 @@ function salesView() {
       ${closeBreakdown(preview)}
     </section>
     ${active.length ? `<p class="warn">이용 중인 룸이 있어 마감할 수 없습니다: ${active.map((r) => esc(r.name)).join(', ')}</p>` : ''}
-    <button class="btn primary block" data-action="close-day" ${active.length || ui.busy ? 'disabled' : ''}>일 마감 (백업 저장 + 서버 업로드)</button>
+    <button class="btn primary block" data-action="close-day" ${active.length || ui.busy ? 'disabled' : ''}>일 마감</button>
     ${pending.length ? `<section class="card warn-card">
       <p>서버에 올리지 못한 마감 ${pending.length}건이 휴대폰에 있습니다: ${pending.map((p) => esc(p.business_date)).join(', ')}</p>
       <button class="btn block" data-action="retry-upload" ${ui.busy ? 'disabled' : ''}>다시 업로드</button>
     </section>` : ''}
-    ${historySection()}
-    <section class="card">
-      <div class="row-between"><h3>지난 마감</h3>
-        <button class="btn small" data-action="load-past" ${ui.busy ? 'disabled' : ''}>불러오기</button></div>
-      ${past ? pastClosesList(past) : '<p class="muted">불러오기를 누르면 최근 60일 마감 기록을 봅니다.</p>'}
-    </section>`;
+    ${calendarSection()}
+    ${historySection()}`;
 }
 
-function pastClosesList({ source, list }) {
-  const note = source === 'server' ? '서버 기록' : '이 휴대폰의 기록 (서버 미연결)';
-  if (!list.length) return `<p class="muted">${note}: 없음</p>`;
-  return `<p class="muted">${note}</p>
-    ${list.map((r) => `<details class="past">
-      <summary><span>${esc(r.business_date)}</span><span class="muted">${esc(r.closed_by || '')}</span><b>${won(r.net_total)}</b></summary>
-      <p class="muted">마감 ${fmtDateTime(r.closed_at)} · 결제 ${r.payment_count}건</p>
-      ${closeBreakdown(r)}
-    </details>`).join('')}`;
+const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
+
+function calendarSection() {
+  const cal = ui.calendar;
+  const byDate = cal.data ? closesByDate(cal.data.list) : new Map();
+  const monthTotal = [...byDate.values()].reduce((a, e) => a + e.net, 0);
+  const [y, m] = cal.month.split('-').map(Number);
+  const today = businessDate(new Date(), state.settings.dayCutoffHour);
+  const isCurrentMonth = cal.month >= monthOf(today);
+  const cells = calendarCells(cal.month)
+    .map((date) => {
+      if (!date) return '<div class="cal-cell empty"></div>';
+      const e = byDate.get(date);
+      const cls = ['cal-cell', e && 'has', date === today && 'today', date === cal.selected && 'sel'].filter(Boolean).join(' ');
+      return `<button class="${cls}" data-action="cal-day" data-date="${date}" ${e ? '' : 'disabled'}
+        aria-label="${Number(date.slice(8))}일${e ? ` 매출 ${won(e.net)}` : ''}">
+        <span class="cal-d">${Number(date.slice(8))}</span>${e ? `<span class="cal-amt">${compactWon(e.net)}</span>` : ''}
+      </button>`;
+    })
+    .join('');
+  const selected = cal.selected && byDate.get(cal.selected);
+  const source = cal.data?.source === 'local' ? '<p class="muted">서버에 연결되지 않아 이 휴대폰에 남은 마감 기록만 보여 줍니다.</p>' : '';
+  return `<section class="card">
+    <div class="cal-head">
+      <button class="icon-btn cal-nav" data-action="cal-month" data-delta="-1" aria-label="이전 달">‹</button>
+      <h3>${y}년 ${m}월 매출</h3>
+      <button class="icon-btn cal-nav" data-action="cal-month" data-delta="1" aria-label="다음 달" ${isCurrentMonth ? 'disabled' : ''}>›</button>
+    </div>
+    <div class="big-total"><span>월 합계 · 영업 ${byDate.size}일</span><b>${cal.loading ? '…' : won(monthTotal)}</b></div>
+    <div class="cal-grid">
+      ${WEEKDAYS.map((w) => `<div class="cal-w">${w}</div>`).join('')}
+      ${cells}
+    </div>
+    ${cal.loading ? '<p class="muted">불러오는 중…</p>' : source}
+    ${selected ? `<div class="cal-detail">
+      <h4>${esc(cal.selected)} 매출</h4>
+      ${selected.closes.map((r) => `<p class="muted">마감 ${fmtDateTime(r.closed_at)}${r.closed_by ? ` · ${esc(r.closed_by)}` : ''} · 결제 ${r.payment_count}건</p>
+        ${closeBreakdown(r)}`).join('')}
+    </div>` : cal.data && byDate.size ? '<p class="muted">날짜를 누르면 그날 매출 상세를 봅니다.</p>' : ''}
+  </section>`;
 }
 
 function startDraft() {
@@ -434,7 +462,7 @@ function settingsView() {
     </div>
     <section class="card">
       <h3>데이터 백업</h3>
-      <p class="muted">일 마감 때 자동으로 백업 파일을 저장합니다. 휴대폰을 바꿀 때는 백업 파일을 가져오세요.</p>
+      <p class="muted">마감 기록은 서버에 저장됩니다. 영업 도중 휴대폰을 바꿀 때만 백업 파일로 옮기세요.</p>
       <div class="actions">
         <button class="btn" data-action="export-backup">백업 내보내기</button>
         <label class="btn file-btn">백업 가져오기<input type="file" accept="application/json,.json" data-input="import"></label>
@@ -450,6 +478,7 @@ const actions = {
     if (ui.tab === el.dataset.tab && el.dataset.tab === 'rooms') ui.roomId = null;
     ui.tab = el.dataset.tab;
     render();
+    if (ui.tab === 'sales' && !ui.calendar.data && !ui.calendar.loading) loadMonth(ui.calendar.month);
   },
   'start-room': (el) => {
     const stale = staleBusinessDate();
@@ -506,7 +535,11 @@ const actions = {
   'confirm-payment': confirmPayment,
   'close-day': closeDay,
   'retry-upload': () => uploadPending(),
-  'load-past': loadPastCloses,
+  'cal-month': (el) => loadMonth(shiftMonth(ui.calendar.month, Number(el.dataset.delta))),
+  'cal-day': (el) => {
+    ui.calendar.selected = ui.calendar.selected === el.dataset.date ? null : el.dataset.date;
+    render();
+  },
   'add-item': () => {
     ui.draft.items.push({ id: newId(), name: '', category: 'liquor', price: '', active: true });
     render();
@@ -595,24 +628,19 @@ async function closeDay() {
   const empty = record.payment_count === 0 ? '\n\n※ 이번 영업일에 결제가 없습니다.' : '';
   const ok = confirm(
     `${record.business_date} 영업을 마감합니다.\n결제 ${record.payment_count}건 · 총매출 ${won(record.net_total)}${empty}\n\n` +
-      '마감하면 백업 파일을 저장하고 서버에 업로드한 뒤 새 영업일을 시작합니다.',
+      '마감하면 서버에 저장하고 새 영업일을 시작합니다.',
   );
   if (!ok) return;
 
-  // 백업 파일을 먼저 남기고, 업로드는 실패해도 휴대폰에 보관한 뒤 재시도한다.
-  const closedAt = new Date(record.closed_at);
-  downloadFile(
-    `store-close-${record.business_date}-${pad(closedAt.getHours())}${pad(closedAt.getMinutes())}.json`,
-    exportBackup(state, record),
-  );
+  // 업로드 전에 휴대폰에 먼저 보관해, 업로드가 실패해도 기록을 잃지 않고 재시도한다.
   state.pendingUploads = [...state.pendingUploads.filter((p) => p.id !== record.id), record];
   state.closeHistory = addCloseHistory(state.closeHistory, record);
   state.payments = [];
   state.businessDay = { id: newId(), openedAt: null };
-  ui.pastCloses = null;
-  ui.notice = `${record.business_date} 마감을 휴대폰에 저장했습니다.`;
+  ui.notice = `${record.business_date} 마감했습니다.`;
   commit();
   await uploadPending();
+  loadMonth(monthOf(record.business_date));
 }
 
 async function uploadPending() {
@@ -650,25 +678,31 @@ async function uploadPending() {
   commit();
 }
 
-async function loadPastCloses() {
-  if (!api.isServerConfigured() || !state.pin) {
-    ui.pastCloses = { source: 'local', list: state.closeHistory };
-    render();
-    return;
-  }
-  ui.busy = true;
+// 매출 캘린더: 한 달치 마감 기록을 서버에서 받는다. 서버를 못 쓰면 휴대폰에 남은 마감 요약을 쓴다.
+async function loadMonth(month) {
+  const cal = ui.calendar;
+  cal.month = month;
+  cal.selected = null;
+  cal.data = null;
+  cal.loading = true;
   render();
-  const to = new Date();
-  const from = new Date();
-  from.setDate(from.getDate() - 60);
-  try {
-    const r = await api.listDayCloses(state.pin, businessDate(from), businessDate(to));
-    ui.pastCloses = { source: 'server', list: r.closes };
-  } catch (e) {
-    ui.pastCloses = { source: 'local', list: state.closeHistory };
-    ui.notice = `서버에서 불러오지 못해 휴대폰 기록을 보여 줍니다: ${e.message}`;
+  const { from, to } = monthRange(month);
+  const local = () => state.closeHistory.filter((r) => r.business_date >= from && r.business_date <= to);
+  let data;
+  if (!api.isServerConfigured() || !state.pin) {
+    data = { source: 'local', list: local() };
+  } else {
+    try {
+      const r = await api.listDayCloses(state.pin, from, to);
+      data = { source: 'server', list: r.closes };
+    } catch (e) {
+      data = { source: 'local', list: local() };
+      ui.notice = `서버에서 매출을 불러오지 못해 휴대폰 기록을 보여 줍니다: ${e.message}`;
+    }
   }
-  ui.busy = false;
+  if (cal.month !== month) return; // 불러오는 사이 다른 달로 옮겼다
+  cal.data = data;
+  cal.loading = false;
   render();
 }
 
@@ -770,7 +804,7 @@ async function importBackup(input) {
   state = { ...imported, pin: state.pin };
   ui.draft = null;
   ui.roomId = null;
-  ui.pastCloses = null;
+  ui.calendar.data = null;
   ui.notice = '백업 파일을 가져왔습니다.';
   commit();
 }

@@ -7,6 +7,7 @@
 - 빌드·npm 의존성 없음. 브라우저 ES modules를 그대로 배포(GitHub Pages, main 브랜치 root).
 - `js/calc.js` — 금액 계산 순수 함수(화면·저장 코드 금지). 계산 규칙을 바꾸면 `tests/calc.test.js`도 함께 바꾼다.
 - `js/storage.js` — localStorage 저장, 기본값, 데이터 정규화·검증, 백업 파일.
+- `js/calendar.js` — 매출 월 캘린더 계산 순수 함수(월 범위, 달력 칸, 날짜별 합계, 만원 표기). `tests/calendar.test.js`.
 - `js/api.js` — Supabase RPC 호출(fetch). 테이블 직접 접근 금지, `supabase/schema.sql`의 함수만 사용.
 - `js/app.js` — 화면 렌더링(문자열 템플릿 + 이벤트 위임). 사용자 입력 문자열은 `esc()`로 출력한다.
 - `js/config.js` — Supabase URL과 publishable(anon) key만. service_role key 금지.
@@ -24,6 +25,7 @@
 - 결제는 룸 시작·종료와 따로 한다. 결제 1건 = 직전 결제 이후 미결제 수량 전체. 결제한 수량 아래로는 줄일 수 없다.
 - 미결제 잔액이 있으면 룸을 종료할 수 없다(결제 후 종료).
 - 이용 중인 룸이 있으면 일 마감을 할 수 없다.
+- 일 마감은 서버에만 저장한다(파일 다운로드 없음). 업로드 전 `pendingUploads`에 먼저 보관해 실패 시 재시도한다. 매출은 매출 탭의 월 캘린더(`list_day_closes`, 서버 미연결 시 `closeHistory`)로 본다.
 - 영업일 = 20시 ~ 다음날 12시(정오) 전, 시작한 날 매출로 기록한다. 영업일은 영업 시작부터 [일 마감]까지이며, 날짜는 첫 룸 시작 시각 기준으로 `dayCutoffHour`(기본 12) 이전이면 전날로 친다.
 - 마감을 빠뜨린 지난 영업일(`isStaleBusinessDay`)이면 경고하고, 룸 시작 시 확인을 받는다.
 - 가격은 관리자가 폰에서 바로 바꾸고 서버에 저장한다(승인 절차 없음). `updatedAt`/`updatedBy`를 기록한다.
