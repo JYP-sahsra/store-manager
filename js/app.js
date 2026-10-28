@@ -21,6 +21,10 @@ import {
   guestSummary,
   changeGuests,
   roomStatus,
+  calcPaymentWithCredit,
+  calcRepayment,
+  normalizePhone,
+  formatPhone,
   overtimeCharge,
   overtimeHours,
   drinkCounts,
@@ -60,9 +64,11 @@ const ui = {
   // 매출 캘린더: data = { source: 'server' | 'local', list }, selected = 펼친 날짜
   calendar: { month: monthOf(new Date()), data: null, loading: false, selected: null },
   // 접고 펴는 영역의 펼침 상태(다시 그려도 유지). 기본 정보는 PIN이 없을 때만 처음부터 펼친다.
-  folds: { basic: !state.pin, rooms: false, items: false, calc: false },
+  folds: { basic: !state.pin, rooms: false, items: false, calc: false, credit: false },
   // 간이 계산기(매출에 기록하지 않음): 품목별 수량, 결제수단, 더치페이 인원
   calc: { counts: {}, method: 'cash', people: 1 },
+  // 외상 장부: accounts = 서버 명단(null이면 아직 안 불러옴), detail = 선택한 사람의 하위 내역
+  credit: { accounts: null, loading: false, error: '', query: '', detail: null, repayText: '', repayMethod: 'cash' },
   appVersion: '', // 실행 중인 앱 버전(service worker 캐시 이름)
   updateReady: false, // 새 버전이 준비됐지만 입력 중이라 적용을 미뤘다
   busy: false,
@@ -442,23 +448,59 @@ function roomDetailView(roomId) {
     </div>`;
 }
 
-function paymentSummary(base, method, discountText) {
+function paymentSummary(base, method, discountText, creditText = '') {
   let r;
   try {
-    r = calcPayment(base, method, parseWon(discountText));
+    r = calcPaymentWithCredit(base, method, parseWon(discountText), parseWon(creditText));
   } catch (e) {
     return `<p class="error" role="alert">${esc(e.message)}</p>`;
   }
   return `<dl class="sum">
-    <div><dt>판매액</dt><dd>${won(r.base)}</dd></div>
+    <div><dt>판매액</dt><dd>${won(r.coveredBase)}</dd></div>
+    ${r.credit ? `<div class="credit-line"><dt>외상 (나중에 받음)</dt><dd>−${won(r.credit)}</dd></div>` : ''}
     ${method === 'card' ? `<div><dt>카드 가산 ${CARD_SURCHARGE_PERCENT}%</dt><dd>+${won(r.surcharge)}</dd></div>` : ''}
     ${r.discount ? `<div><dt>할인</dt><dd>−${won(r.discount)}</dd></div>` : ''}
     <div class="grand"><dt>받을 금액</dt><dd>${won(r.amount)}</dd></div>
   </dl>`;
 }
 
+// 결제 화면의 외상 영역(접힘). 외상이 드물어 기본 결제 흐름에 끼어들지 않게 한다.
+function creditFold(base) {
+  const p = ui.payment;
+  return `<details class="credit-fold" data-fold="pay-credit" ${p.creditOpen ? 'open' : ''}>
+    <summary>외상 처리 <span class="muted">(선택 · 일부 또는 전액을 나중에 받기)</span></summary>
+    <div class="credit-amount">
+      <label class="field"><span>외상 금액(원, 현금 기준)</span>
+        <input data-input="credit-amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(p.creditText)}"></label>
+      <button class="btn small" data-action="credit-all" data-base="${base}">전액 외상</button>
+    </div>
+    <div class="grid-2">
+      <label class="field"><span>전화번호</span>
+        <input data-input="credit-phone" type="tel" inputmode="tel" autocomplete="off" placeholder="010-0000-0000" value="${esc(p.creditPhone)}"></label>
+      <label class="field"><span>이름</span>
+        <input data-input="credit-name" autocomplete="off" value="${esc(p.creditName)}"></label>
+    </div>
+    <div id="credit-match">${creditMatch()}</div>
+  </details>`;
+}
+
+// 입력한 전화번호·이름으로 기존 외상 명단을 찾아 보여 준다(같은 사람 = 같은 전화번호).
+function creditMatch() {
+  const p = ui.payment;
+  const list = ui.credit.accounts;
+  if (!list) return `<p class="muted">${ui.credit.loading ? '외상 명단을 불러오는 중…' : esc(ui.credit.error || '')}</p>`;
+  const digits = normalizePhone(p.creditPhone);
+  const exact = digits && list.find((a) => a.phone === digits);
+  if (exact) return `<p class="credit-hit">기존 명단: <b>${esc(exact.name)}</b> · 외상 잔액 ${won(exact.balance)} (이 내역 아래에 추가됩니다)</p>`;
+  const q = (p.creditName || '').trim();
+  const hits = list.filter((a) => (digits.length >= 3 && a.phone.includes(digits)) || (q && a.name.includes(q))).slice(0, 5);
+  if (!hits.length) return digits.length >= 9 ? '<p class="muted">새 외상 명단으로 등록됩니다.</p>' : '';
+  return `<div class="credit-hits">${hits.map((a) => `<button class="chip" data-action="credit-pick" data-phone="${esc(a.phone)}" data-name="${esc(a.name)}">
+    ${esc(a.name)} ${esc(formatPhone(a.phone))} · ${won(a.balance)}</button>`).join('')}</div>`;
+}
+
 function paymentSheet() {
-  const { roomId, method, discountText, endAfter } = ui.payment;
+  const { roomId, method, discountText, endAfter, creditText } = ui.payment;
   const room = roomById(roomId);
   const s = state.sessions[roomId];
   const lines = unpaidLines(s, room, state.settings.items);
@@ -479,7 +521,8 @@ function paymentSheet() {
       <label class="field"><span>할인 금액(원)</span>
         <input id="discount" data-input="discount" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(discountText)}">
       </label>
-      <div id="pay-summary">${paymentSummary(base, method, discountText)}</div>
+      ${creditFold(base)}
+      <div id="pay-summary">${paymentSummary(base, method, discountText, creditText)}</div>
       <div class="actions">
         <button class="btn" data-action="cancel-payment">취소</button>
         <button class="btn primary" id="confirm-payment" data-action="confirm-payment">결제 완료</button>
@@ -535,6 +578,8 @@ function closeBreakdown(r) {
       <div><dt>룸 이용</dt><dd>${won(cat.room)}</dd></div>
       <div><dt>식음료</dt><dd>${won(cat.liquor)}</dd></div>
       <div><dt>기타 서비스</dt><dd>${won(cat.service)}</dd></div>
+      ${cat.credit_issued ? `<div><dt>외상 발생 (나중에 받음)</dt><dd>−${won(cat.credit_issued)}</dd></div>` : ''}
+      ${cat.credit_repaid ? `<div><dt>외상 회수</dt><dd>+${won(cat.credit_repaid)}</dd></div>` : ''}
       <div class="sub"><dt>판매액 합계</dt><dd>${won(r.gross_sales)}</dd></div>
       <div><dt>카드 가산</dt><dd>+${won(r.card_surcharge_total)}</dd></div>
       <div><dt>할인</dt><dd>−${won(r.discount_total)}</dd></div>
@@ -579,7 +624,107 @@ function salesView() {
       <button class="btn block" data-action="retry-upload" ${ui.busy ? 'disabled' : ''}>다시 업로드</button>
     </section>` : ''}
     ${calendarSection()}
+    ${creditSection()}
     ${historySection()}`;
+}
+
+// 외상 장부: 명단(이름·전화번호·잔액) → 사람별 하위 내역, 상환, 잔액 0원이면 삭제
+function creditSection() {
+  const c = ui.credit;
+  const pending = state.pendingCredits.length;
+  const open = (c.accounts || []).filter((a) => a.balance > 0);
+  let body;
+  if (c.detail) body = creditDetail();
+  else if (!c.accounts) body = `<p class="muted">${c.loading ? '외상 명단을 불러오는 중…' : esc(c.error || '명단을 불러오려면 새로고침을 누르세요.')}</p>`;
+  else {
+    body = `<label class="field"><span>검색 (이름 · 전화번호)</span>
+        <input data-input="credit-search" autocomplete="off" value="${esc(c.query)}"></label>
+      <div id="credit-list">${creditListRows()}</div>`;
+  }
+  return `<details class="card fold" data-fold="credit" ${ui.folds.credit ? 'open' : ''}>
+    <summary><h3>외상 장부</h3><span class="muted">${c.accounts ? `미상환 ${open.length}명 · 잔액 ${won(open.reduce((a, x) => a + x.balance, 0))}` : '펼치면 서버에서 명단을 불러옵니다'}</span></summary>
+    ${pending ? `<div class="warn">서버에 아직 못 보낸 외상 기록 ${pending}건이 이 폰에 있습니다.
+      <button class="btn small" data-action="credit-retry" ${ui.busy ? 'disabled' : ''}>다시 보내기</button></div>` : ''}
+    ${body}
+    ${c.detail ? '' : `<button class="btn small" data-action="credit-reload" ${c.loading ? 'disabled' : ''}>새로고침</button>`}
+  </details>`;
+}
+
+function creditListRows() {
+  const q = ui.credit.query.trim();
+  const digits = normalizePhone(q);
+  const list = (ui.credit.accounts || []).filter((a) => !q || a.name.includes(q) || (digits && a.phone.includes(digits)));
+  if (!list.length) return `<p class="muted">${q ? '검색 결과가 없습니다.' : '외상 명단이 없습니다.'}</p>`;
+  return list
+    .map((a) => `<button class="credit-row ${a.balance ? '' : 'settled'}" data-action="credit-open" data-id="${esc(a.id)}">
+      <span class="who"><b>${esc(a.name)}</b><small>${esc(formatPhone(a.phone))}</small></span>
+      <b class="bal">${a.balance ? won(a.balance) : '상환 완료'}</b>
+    </button>`)
+    .join('');
+}
+
+function creditDetail() {
+  const { account, balance, entries } = ui.credit.detail;
+  const c = ui.credit;
+  const rows = entries
+    .map((e) => (e.kind === 'issue'
+      ? `<li class="issue"><div><b>외상 +${won(e.amount)}</b>
+          <small>${fmtDateTime(e.occurred_at)} · ${esc(e.room_name || '')}${e.entered_at ? ` · 입장 ${fmtTime(e.entered_at)}` : ''}${e.room_hours != null ? ` · 룸 ${e.room_hours}시간` : ''}${e.service_hours ? ` · 서비스 ${e.service_hours}시간` : ''}</small></div></li>`
+      : `<li class="repay"><div><b>상환 −${won(e.amount)}</b>
+          <small>${fmtDateTime(e.occurred_at)} · ${METHOD_LABELS[e.method] || ''}${e.paid_amount && e.paid_amount !== e.amount ? ` · 받은 금액 ${won(e.paid_amount)}` : ''}</small></div></li>`))
+    .join('');
+  return `<div class="credit-detail">
+    <button class="link" data-action="credit-back">‹ 외상 명단</button>
+    <div class="row-between"><h4>${esc(account.name)} · ${esc(formatPhone(account.phone))}</h4><b class="bal">${won(balance)}</b></div>
+    <ul class="credit-entries">${rows || '<li class="muted">내역 없음</li>'}</ul>
+    ${balance > 0 ? `<div class="repay-form">
+      <h4>상환 받기</h4>
+      <div class="credit-amount">
+        <label class="field"><span>상환 금액(원, 장부 차감액)</span>
+          <input data-input="repay-amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(c.repayText)}"></label>
+        <button class="btn small" data-action="repay-all">전액</button>
+      </div>
+      <div class="segmented" role="radiogroup" aria-label="상환 결제수단">
+        <button role="radio" aria-checked="${c.repayMethod === 'cash'}" data-action="repay-method" data-method="cash">현금</button>
+        <button role="radio" aria-checked="${c.repayMethod === 'card'}" data-action="repay-method" data-method="card">카드 (+${CARD_SURCHARGE_PERCENT}%)</button>
+      </div>
+      <div id="repay-summary">${repaySummary()}</div>
+      <button class="btn primary block" data-action="repay-confirm" ${ui.busy ? 'disabled' : ''}>상환 받기</button>
+    </div>` : `<p class="muted">전부 상환했습니다. 명단을 지우면 이름·전화번호와 하위 내역이 서버에서 삭제됩니다.</p>
+      <button class="btn block danger" data-action="credit-delete" ${ui.busy ? 'disabled' : ''}>명단 삭제</button>`}
+  </div>`;
+}
+
+function repaySummary() {
+  const c = ui.credit;
+  if (!c.repayText) return '';
+  let r;
+  try {
+    r = calcRepayment(parseWon(c.repayText, Number.NaN), c.repayMethod, c.detail.balance);
+  } catch (e) {
+    return `<p class="error" role="alert">${esc(e.message)}</p>`;
+  }
+  return `<dl class="sum">
+    <div><dt>장부에서 차감</dt><dd>${won(r.base)}</dd></div>
+    ${r.surcharge ? `<div><dt>카드 가산 ${CARD_SURCHARGE_PERCENT}%</dt><dd>+${won(r.surcharge)}</dd></div>` : ''}
+    <div class="grand"><dt>받을 금액</dt><dd>${won(r.amount)}</dd></div>
+    <div><dt>상환 후 잔액</dt><dd>${won(c.detail.balance - r.base)}</dd></div>
+  </dl>`;
+}
+
+async function openCreditAccount(id) {
+  ui.credit.loading = true;
+  render();
+  try {
+    const r = await api.getCreditAccount(state.pin, id);
+    ui.credit.detail = { account: r.account, balance: r.balance, entries: r.entries };
+    ui.credit.repayText = '';
+    ui.credit.repayMethod = 'cash';
+  } catch (e) {
+    ui.notice = `외상 내역을 불러오지 못했습니다: ${e.message}`;
+  }
+  ui.credit.loading = false;
+  render();
 }
 
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -776,14 +921,96 @@ const actions = {
   dec: (el) => updateCount(el.dataset.key, -1),
   free: (el) => updateSession((s) => changeFreeCount(s, el.dataset.key, Number(el.dataset.delta))),
   'open-payment': () => {
-    ui.payment = { roomId: ui.roomId, method: 'cash', discountText: '', endAfter: false };
+    ui.payment = newPaymentUi(ui.roomId, false);
+    render();
+  },
+  'credit-open': (el) => openCreditAccount(el.dataset.id),
+  'credit-back': () => {
+    ui.credit.detail = null;
+    render();
+  },
+  'credit-reload': () => {
+    ui.credit.accounts = null;
+    loadCreditAccounts();
+  },
+  'credit-retry': () => uploadCredits(),
+  'repay-all': () => {
+    ui.credit.repayText = String(ui.credit.detail.balance);
+    render();
+  },
+  'repay-method': (el) => {
+    ui.credit.repayMethod = el.dataset.method;
+    render();
+  },
+  // 상환: 서버 장부에 먼저 기록한 뒤(잔액 검사) 그날 매출(외상 회수)로 잡는다.
+  'repay-confirm': async () => {
+    const c = ui.credit;
+    const { account, balance } = c.detail;
+    const amount = parseWon(c.repayText, Number.NaN);
+    let r;
+    try {
+      r = calcRepayment(amount, c.repayMethod, balance);
+    } catch (e) {
+      alert(e.message);
+      return;
+    }
+    if (!confirm(`${account.name} 외상 ${won(amount)} 상환\n${METHOD_LABELS[c.repayMethod]}로 ${won(r.amount)}을(를) 받을까요?`)) return;
+    const now = new Date();
+    const entry = {
+      id: newId(), kind: 'repay', phone: account.phone, amount, method: c.repayMethod, paid_amount: r.amount,
+      occurred_at: now.toISOString(), business_date: currentBusinessDate(), created_by: state.managerName || null,
+    };
+    ui.busy = true;
+    render();
+    try {
+      await api.addCreditEntry(state.pin, entry);
+    } catch (e) {
+      ui.busy = false;
+      notify(`상환을 기록하지 못했습니다: ${e.message}`);
+      return;
+    }
+    state.payments.push({
+      id: newId(), type: 'repay', roomId: null, roomName: '외상 회수', sessionId: null, paidAt: now.toISOString(),
+      method: c.repayMethod, lines: [], creditEntryId: entry.id, credit: 0, coveredBase: 0, ...r,
+    });
+    ui.busy = false;
+    ui.notice = `${account.name} 외상 ${won(amount)} 상환(${METHOD_LABELS[c.repayMethod]} ${won(r.amount)})을 기록했습니다.`;
+    ui.credit.accounts = null;
+    commit();
+    await openCreditAccount(account.id);
+    loadCreditAccounts();
+  },
+  'credit-delete': async () => {
+    const { account } = ui.credit.detail;
+    if (!confirm(`${account.name} (${formatPhone(account.phone)}) 명단을 삭제할까요?\n이름·전화번호와 하위 내역이 모두 지워지며 되돌릴 수 없습니다.`)) return;
+    ui.busy = true;
+    render();
+    try {
+      await api.deleteCreditAccount(state.pin, account.id);
+      ui.credit.detail = null;
+      ui.credit.accounts = null;
+      ui.notice = `${account.name} 외상 명단을 삭제했습니다.`;
+    } catch (e) {
+      ui.notice = `삭제하지 못했습니다: ${e.message}`;
+    }
+    ui.busy = false;
+    render();
+    loadCreditAccounts();
+  },
+  'credit-all': (el) => {
+    ui.payment.creditText = el.dataset.base;
+    render();
+  },
+  'credit-pick': (el) => {
+    ui.payment.creditPhone = formatPhone(el.dataset.phone);
+    ui.payment.creditName = el.dataset.name;
     render();
   },
   'end-room': () => {
     const room = roomById(ui.roomId);
     const s = state.sessions[room.id];
     if (balanceOf(room, s) > 0) {
-      ui.payment = { roomId: room.id, method: 'cash', discountText: '', endAfter: true };
+      ui.payment = newPaymentUi(room.id, true);
       render();
       return;
     }
@@ -837,6 +1064,38 @@ const actions = {
   },
 };
 
+function newPaymentUi(roomId, endAfter) {
+  return { roomId, method: 'cash', discountText: '', endAfter, creditOpen: false, creditText: '', creditPhone: '', creditName: '' };
+}
+
+// 외상 명단(서버). 결제 화면 외상 영역을 펼치거나 외상 장부를 열 때 불러온다.
+async function loadCreditAccounts() {
+  if (ui.credit.loading) return;
+  if (!api.isServerConfigured() || !state.pin) {
+    ui.credit.error = '외상 명단은 서버와 매장 PIN이 있어야 볼 수 있습니다(외상 기록은 폰에 보관했다가 나중에 보냅니다).';
+    refreshCreditViews();
+    return;
+  }
+  ui.credit.loading = true;
+  refreshCreditViews();
+  try {
+    const r = await api.listCreditAccounts(state.pin, '');
+    ui.credit.accounts = r.accounts;
+    ui.credit.error = '';
+  } catch (e) {
+    ui.credit.error = `외상 명단을 불러오지 못했습니다: ${e.message}`;
+  }
+  ui.credit.loading = false;
+  refreshCreditViews();
+}
+
+// 결제 화면이 열려 있으면 입력 중인 칸을 지키려고 명단 안내 부분만 다시 그린다.
+function refreshCreditViews() {
+  const match = document.getElementById('credit-match');
+  if (ui.payment && match) match.innerHTML = creditMatch();
+  else render();
+}
+
 // 룸을 비운다. 서비스(무료)로 내준 식음료가 있으면 이번 영업일 제공 기록(comps)에 남긴다.
 function closeSession(roomId) {
   const s = state.sessions[roomId];
@@ -861,7 +1120,7 @@ function updateSession(change) {
 const updateCount = (key, delta) => updateSession((s) => changeCount(s, key, delta));
 
 function confirmPayment() {
-  const { roomId, method, discountText, endAfter } = ui.payment;
+  const { roomId, method, discountText, endAfter, creditText, creditPhone, creditName } = ui.payment;
   const room = roomById(roomId);
   const s = state.sessions[roomId];
   // 초과분 계산과 서비스 시간 확정에 같은 시각을 써서 결제 금액과 연장 시간이 어긋나지 않게 한다.
@@ -871,10 +1130,35 @@ function confirmPayment() {
   if (base === 0) return;
   let result;
   try {
-    result = calcPayment(base, method, parseWon(discountText));
+    result = calcPaymentWithCredit(base, method, parseWon(discountText), parseWon(creditText));
   } catch (e) {
     alert(e.message);
     return;
+  }
+  // 외상이 있으면 전화번호(같은 사람 판단)와 이름이 필요하다. 이름이 비어 있으면 기존 명단 이름을 쓴다.
+  let creditEntry = null;
+  if (result.credit) {
+    const phone = normalizePhone(creditPhone);
+    const known = ui.credit.accounts?.find((a) => a.phone === phone);
+    const name = (creditName || '').trim() || known?.name || '';
+    if (phone.length < 9) return alert('외상 고객 전화번호를 9자리 이상 숫자로 입력해 주세요.');
+    if (!name) return alert('외상 고객 이름을 입력해 주세요.');
+    if (!confirm(`${name} (${formatPhone(phone)}) 외상 ${won(result.credit)}을(를) 기록하고 ${won(result.amount)}을(를) 받을까요?`)) return;
+    creditEntry = { id: newId(), kind: 'issue', phone, name, amount: result.credit };
+  }
+  const paidSession = markSessionPaid(s, now);
+  if (creditEntry) {
+    // 하위 내역: 언제, 어느 룸, 입장 시각, 룸·서비스 시간
+    Object.assign(creditEntry, {
+      occurred_at: now.toISOString(),
+      business_date: currentBusinessDate(),
+      room_name: room.name,
+      entered_at: s.startedAt,
+      room_hours: paidSession.hours,
+      service_hours: paidSession.services.reduce((a, v) => a + v.hours, 0),
+      created_by: state.managerName || null,
+    });
+    state.pendingCredits = [...state.pendingCredits, creditEntry];
   }
   state.payments.push({
     id: newId(),
@@ -884,17 +1168,41 @@ function confirmPayment() {
     paidAt: now.toISOString(),
     method,
     lines,
-    coveredBase: base,
+    // 결제 기록에는 개인정보 없이 외상 기록 id만 남긴다.
+    ...(creditEntry ? { creditEntryId: creditEntry.id } : {}),
     ...result,
   });
-  state.sessions[roomId] = markSessionPaid(s, now);
+  state.sessions[roomId] = paidSession;
   ui.payment = null;
-  ui.notice = `${room.name} ${METHOD_LABELS[method]} ${won(result.amount)} 결제했습니다.`;
+  ui.notice = `${room.name} ${METHOD_LABELS[method]} ${won(result.amount)} 결제했습니다.${creditEntry ? ` 외상 ${won(creditEntry.amount)} 기록.` : ''}`;
   if (endAfter) {
     closeSession(roomId);
     ui.roomId = null;
     ui.notice += ' 룸을 종료했습니다.';
   }
+  commit();
+  if (creditEntry) uploadCredits();
+}
+
+// 외상 발생 기록을 서버에 보낸다. 실패하면 폰에 남겨 두고 다음 동기화 때 다시 보낸다.
+async function uploadCredits() {
+  if (!state.pendingCredits.length || !api.isServerConfigured() || !state.pin || ui.credit.sending) return;
+  ui.credit.sending = true;
+  const sent = [];
+  let error = '';
+  for (const entry of state.pendingCredits) {
+    try {
+      await api.addCreditEntry(state.pin, entry);
+      sent.push(entry.id);
+    } catch (e) {
+      error = e.message;
+      break;
+    }
+  }
+  ui.credit.sending = false;
+  state.pendingCredits = state.pendingCredits.filter((p) => !sent.includes(p.id));
+  if (sent.length) ui.credit.accounts = null; // 명단을 새로 받게 한다
+  if (error) ui.notice = `외상 기록을 서버에 보내지 못했습니다: ${error} (폰에 보관 중, 동기화 때 다시 보냅니다)`;
   commit();
 }
 
@@ -1113,15 +1421,27 @@ app.addEventListener('click', (e) => {
   actions[el.dataset.action]?.(el);
 });
 
+const PAYMENT_INPUTS = { discount: 'discountText', 'credit-amount': 'creditText', 'credit-phone': 'creditPhone', 'credit-name': 'creditName' };
+
 function onInput(e) {
   const el = e.target;
-  if (el.dataset.input === 'discount') {
-    // 입력 중 포커스를 잃지 않도록 합계 부분만 다시 그린다.
-    ui.payment.discountText = el.value;
-    const { roomId, method } = ui.payment;
+  if (PAYMENT_INPUTS[el.dataset.input]) {
+    // 입력 중 포커스를 잃지 않도록 합계·명단 안내 부분만 다시 그린다.
+    ui.payment[PAYMENT_INPUTS[el.dataset.input]] = el.value;
+    const { roomId, method, discountText, creditText } = ui.payment;
     const base = sumLines(unpaidLines(state.sessions[roomId], roomById(roomId), state.settings.items));
-    document.getElementById('pay-summary').innerHTML = paymentSummary(base, method, el.value);
-    document.getElementById('confirm-payment').disabled = Number.isNaN(parseWon(el.value)) || !!document.querySelector('#pay-summary .error');
+    document.getElementById('pay-summary').innerHTML = paymentSummary(base, method, discountText, creditText);
+    document.getElementById('confirm-payment').disabled = !!document.querySelector('#pay-summary .error');
+    const match = document.getElementById('credit-match');
+    if (match) match.innerHTML = creditMatch();
+  } else if (el.dataset.input === 'credit-search') {
+    ui.credit.query = el.value;
+    const list = document.getElementById('credit-list');
+    if (list) list.innerHTML = creditListRows();
+  } else if (el.dataset.input === 'repay-amount') {
+    ui.credit.repayText = el.value;
+    const sum = document.getElementById('repay-summary');
+    if (sum) sum.innerHTML = repaySummary();
   } else if (el.dataset.input === 'draft') {
     setDraft(el.dataset.path, el.type === 'checkbox' ? el.checked : el.value);
   }
@@ -1145,7 +1465,13 @@ app.addEventListener(
   'toggle',
   (e) => {
     const key = e.target.dataset?.fold;
-    if (key && key in ui.folds) ui.folds[key] = e.target.open;
+    if (key === 'pay-credit' && ui.payment) {
+      ui.payment.creditOpen = e.target.open;
+      if (e.target.open && !ui.credit.accounts) loadCreditAccounts();
+    } else if (key && key in ui.folds) {
+      ui.folds[key] = e.target.open;
+      if (key === 'credit' && e.target.open && !ui.credit.accounts) loadCreditAccounts();
+    }
   },
   true,
 );
@@ -1198,6 +1524,9 @@ async function syncAll() {
   }
   await syncSettings();
   await uploadPending();
+  await uploadCredits();
+  ui.credit.accounts = null;
+  ui.credit.detail = null;
   if (ui.tab === 'sales') await loadMonth(ui.calendar.month);
   else ui.calendar.data = null;
   if (ui.notice === '동기화 중…') {
@@ -1232,4 +1561,4 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
 }
 
 render();
-syncSettings().then(() => uploadPending());
+syncSettings().then(() => uploadPending()).then(() => uploadCredits());

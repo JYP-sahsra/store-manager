@@ -31,6 +31,10 @@ import {
   changeFreeCount,
   freeItems,
   summarizeComps,
+  calcPaymentWithCredit,
+  calcRepayment,
+  normalizePhone,
+  formatPhone,
 } from '../js/calc.js';
 
 const room = { id: 'room1', name: '1번 룸', hourlyRate: 30000 };
@@ -221,6 +225,41 @@ test('서비스(무료) 제공: 청구하지 않고 수량·정가 기준 금액
   const rec = buildCloseRecord({ id: 'c', openedAt: null, closedAt: new Date().toISOString(), cutoffHour: 12, payments: [], comps });
   assert.equal(rec.net_total, 0);
   assert.equal(rec.by_item.filter((i) => i.kind === 'comp').length, 2);
+});
+
+test('외상: 판매액에서 먼저 빼고(가산 없음) 남은 금액에만 수단 가산·할인', () => {
+  assert.deepEqual(calcPaymentWithCredit(100000, 'card', 0, 40000), {
+    base: 60000, surcharge: 6000, discount: 0, amount: 66000, credit: 40000, coveredBase: 100000,
+  });
+  assert.deepEqual(calcPaymentWithCredit(100000, 'cash', 0, 100000).amount, 0); // 전액 외상
+  assert.throws(() => calcPaymentWithCredit(100000, 'cash', 0, 100001), /판매액/);
+  assert.throws(() => calcPaymentWithCredit(100000, 'cash', 0, -1), /0 이상/);
+});
+
+test('외상 상환: 장부는 상환액만, 카드는 1.1배 수령, 잔액 초과 불가', () => {
+  assert.deepEqual(calcRepayment(50000, 'card', 120000), { base: 50000, surcharge: 5000, discount: 0, amount: 55000 });
+  assert.equal(calcRepayment(50000, 'cash', 50000).amount, 50000);
+  assert.throws(() => calcRepayment(50001, 'cash', 50000), /잔액/);
+  assert.throws(() => calcRepayment(0, 'cash', 50000), /1원 이상/);
+});
+
+test('외상 매출 인식: 발생일 매출에서 빼고 회수일 매출에 넣는다', () => {
+  const sale = {
+    roomId: 'room1', roomName: '1번 룸', method: 'cash', credit: 40000, base: 60000, surcharge: 0, discount: 0, amount: 60000,
+    lines: [{ kind: 'room', name: '1번 룸 이용(시간)', unitPrice: 100000, qty: 1, subtotal: 100000 }],
+  };
+  const repay = { type: 'repay', roomId: null, roomName: '외상 회수', method: 'card', credit: 0, base: 30000, surcharge: 3000, discount: 0, amount: 33000, lines: [] };
+  const rec = buildCloseRecord({ id: 'c', openedAt: null, closedAt: new Date().toISOString(), cutoffHour: 12, payments: [sale, repay] });
+  assert.equal(rec.gross_sales, 90000); // 60,000 + 회수 30,000
+  assert.equal(rec.net_total, 93000);
+  assert.deepEqual(rec.by_category, { room: 100000, liquor: 0, service: 0, credit_issued: 40000, credit_repaid: 30000 });
+  assert.deepEqual(rec.by_room.map((r) => r.roomId), ['room1']); // 회수는 룸 집계에 넣지 않음
+});
+
+test('전화번호 정규화·표시', () => {
+  assert.equal(normalizePhone('010-1234 5678'), '01012345678');
+  assert.equal(formatPhone('01012345678'), '010-1234-5678');
+  assert.equal(formatPhone('0212345678'), '021-234-5678');
 });
 
 test('서비스 경과 시간(분)', () => {

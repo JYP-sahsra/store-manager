@@ -32,6 +32,8 @@
 - 초과 자동 청구: 종료 시각을 넘긴 서비스는 `overtimeHours`(올림(초과 분/60), 최소 1)만큼 `unpaidLines`에 자동 포함(줄에 `overtimeHours` 표시). 저장된 `hours`는 그대로 두고, 결제 시 `markSessionPaid(session, now)`가 hours를 늘려 확정한다. 두 함수에 같은 `now`를 넘긴다. `overtimeCharge` = 미결제에 포함된 초과 금액(표시용).
 - 룸 타일 식음료 표시: `drinkCounts` = 식음료 품목별 누적 수량(결제 여부 무관) + free(서비스 수량).
 - 서비스(무료) 제공: 세션 `freeQuantities`(청구 안 함, `unpaidLines`에 들어가지 않음). 룸을 비울 때(`closeSession`: 종료·결제 후 종료·이용안함) `freeItems`를 `state.comps`에 기록하고, 일 마감 시 `buildCloseRecord({comps})`가 `by_item`에 kind 'comp'(sales 0, value = 정가 × 수량)로 넣는다. 금액 합계(net_total 등)는 변하지 않는다. 서버 스키마 변경 없음(by_item jsonb).
+- 외상: 결제 시 외상분을 판매액에서 먼저 뺀다(현금 기준, 카드 가산 없음, 할인은 받는 부분에만) — `calcPaymentWithCredit`. 결제 기록 `base` = 판매액 − 외상(그날 매출), `coveredBase` = 판매액, `credit`, `creditEntryId`(이름·전화번호는 결제 기록에 넣지 않음). 매출은 갚은 날: 상환은 `type: 'repay'` 결제 기록(roomId null, lines [], base = 장부 차감액, 카드면 surcharge 10%). 마감 `by_category`에 `credit_issued`, `credit_repaid`(gross_sales = room+liquor+service − issued + repaid).
+- 외상 장부 서버: `supabase/credit.sql`(credit_accounts 전화번호 unique, credit_entries issue/repay, RPC list/get/add/delete, 상환 잔액 초과·잔액 남은 삭제를 서버에서 거부). 외상 발생은 `pendingCredits`에 먼저 넣고 `uploadCredits`로 전송(재전송 안전: entry id), 상환은 서버 기록 성공 후에만 매출 반영.
 - 간이 계산기: `ui.calc`(화면 상태만, 저장·매출 기록 없음). 금액은 `calcPayment(판매액, 수단, 0)`, 더치페이는 `splitBill`(1인 100원 단위 올림, 차액 extra).
 - 접기 영역 펼침 상태는 `ui.folds`(basic/rooms/items/calc)에 두고 toggle 이벤트(capture)로 갱신한다.
 - 룸 이용안함: 기타 서비스가 하나라도 있으면 불가(버튼 숨김 + 동작에서도 차단). [이용안함 · 룸 비우기] 버튼으로 확인 후 세션을 비운다. 미결제 주문은 취소, 이미 받은 결제는 매출에 남는다. 이용안함 건수는 따로 기록하지 않는다.
@@ -47,6 +49,7 @@
 
 - localStorage 키 `storeManager.v1`, `version: 1`. 구조를 바꾸면 version을 올리고 `normalizeState`에 변환 코드를 추가한다.
 - 설정(`settings`)은 `settingsVersion`(현재 2)을 가진다. v1(필드 없음)의 `dayCutoffHour: 0`은 12로 옮긴다(`normalizeSettings`). 서버 `store_settings.data`도 같은 형식.
+- 미전송 외상(`pendingCredits[]`): `{id, kind:'issue', phone(숫자), name, amount, occurred_at, business_date, room_name, entered_at, room_hours, service_hours, created_by}` — 서버 전송 후 삭제.
 - 영업일 서비스 제공 기록(`comps[]`): `id, roomId, roomName, sessionId, at, items[{itemId, name, qty, listPrice}]` — 마감 때 비운다.
 - 세션(`sessions.roomN`): `id, startedAt, hours, quantities, paidHours, paidQuantities, freeQuantities, guests, declined, services[{id, itemId, startedAt, hours, paidHours}]` (`services`가 없던 예전 데이터는 빈 목록으로 정규화)
 - 결제(`payments[]`): `id, roomId, roomName, sessionId, paidAt, method('cash'|'card'), lines[{kind('room'|'liquor'|'service'), itemId, name, unitPrice, qty, subtotal, serviceId?, startedAt?, overtimeHours?}], coveredBase, base, surcharge, discount, amount` (시간제 서비스 줄은 qty = 시간)

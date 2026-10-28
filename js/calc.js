@@ -203,6 +203,35 @@ export function calcPayment(base, method, discount) {
   return { base, surcharge, discount, amount: beforeDiscount - discount };
 }
 
+// ── 외상 ──
+// 외상분은 현금 기준(카드 가산 없음)으로 판매액에서 먼저 빼고, 남은 금액에만 결제수단 가산과 할인을 적용한다.
+// 매출은 갚은 날 잡는다: 결제 기록의 base는 외상을 뺀 금액, coveredBase는 외상 포함 판매액.
+export function calcPaymentWithCredit(base, method, discount, credit) {
+  if (!Number.isInteger(credit) || credit < 0) throw new Error('외상 금액은 0 이상의 숫자(원)로 입력해 주세요.');
+  if (credit > base) throw new Error(`외상 금액이 판매액(${base.toLocaleString('ko-KR')}원)보다 큽니다.`);
+  const r = calcPayment(base - credit, method, discount);
+  return { ...r, credit, coveredBase: base };
+}
+
+// 전화번호는 숫자만 비교·저장한다(하이픈·공백 무시).
+export function normalizePhone(text) {
+  return String(text ?? '').replace(/\D/g, '');
+}
+
+export function formatPhone(digits) {
+  const d = normalizePhone(digits);
+  if (d.length === 11) return `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
+  return d;
+}
+
+// 외상 상환: 장부에서는 상환액만 차감하고, 카드면 상환액 × 1.1을 받는다.
+export function calcRepayment(amount, method, balance) {
+  if (!Number.isInteger(amount) || amount <= 0) throw new Error('상환 금액을 1원 이상 입력해 주세요.');
+  if (amount > balance) throw new Error(`상환 금액이 외상 잔액(${balance.toLocaleString('ko-KR')}원)보다 큽니다.`);
+  return calcPayment(amount, method, 0);
+}
+
 // 더치페이: 1인 금액은 100원 단위로 올린다. 모은 돈이 결제 금액보다 많아지는 차액(extra)을 함께 돌려준다.
 export function splitBill(amount, people) {
   const n = Math.max(1, Math.floor(people) || 1);
@@ -289,6 +318,8 @@ export function summarizeDay(payments) {
     byRoom: [],
     byCategory: { room: 0, liquor: 0, service: 0 },
     byItem: [],
+    creditIssued: 0, // 이날 외상으로 돌린 판매액(매출에서 제외)
+    creditRepaid: 0, // 이날 회수한 외상(장부 차감액, 매출에 포함)
   };
   const rooms = new Map();
   const items = new Map();
@@ -299,6 +330,11 @@ export function summarizeDay(payments) {
     summary.netTotal += p.amount;
     if (p.method === 'card') summary.cardTotal += p.amount;
     else summary.cashTotal += p.amount;
+    summary.creditIssued += p.credit || 0;
+    if (p.type === 'repay') {
+      summary.creditRepaid += p.base;
+      continue; // 외상 회수는 룸·품목 집계에 넣지 않는다
+    }
 
     if (!rooms.has(p.roomId)) {
       rooms.set(p.roomId, { roomId: p.roomId, roomName: p.roomName, base: 0, net: 0, count: 0 });
@@ -358,7 +394,9 @@ export function buildCloseRecord({ id, openedAt, closedAt, closedBy, cutoffHour,
     card_total: s.cardTotal,
     payment_count: s.paymentCount,
     by_room: s.byRoom,
-    by_category: s.byCategory,
+    // 외상 발생·회수 합계도 by_category에 함께 둔다(서버 스키마 변경 없음).
+    // 판매액 합계(gross_sales) = room + liquor + service − credit_issued + credit_repaid
+    by_category: { ...s.byCategory, credit_issued: s.creditIssued, credit_repaid: s.creditRepaid },
     by_item: [...s.byItem, ...summarizeComps(comps)],
     payments,
   };

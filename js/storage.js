@@ -47,6 +47,7 @@ export function defaultState() {
     payments: [],
     pendingUploads: [],
     closeHistory: [],
+    pendingCredits: [], // 서버에 아직 못 보낸 외상 발생 기록(이름·전화번호 포함, 보내면 지운다)
     comps: [], // 이번 영업일 서비스(무료) 제공 기록 [{id, roomId, roomName, sessionId, at, items[{itemId, name, qty, listPrice}]}]
   };
 }
@@ -124,7 +125,7 @@ function normalizeSession(raw) {
 export function normalizeState(raw) {
   if (!isObject(raw)) throw new Error('데이터 형식이 올바르지 않습니다');
   if (raw.version !== STATE_VERSION) throw new Error(`지원하지 않는 데이터 버전입니다: ${raw.version}`);
-  for (const key of ['payments', 'pendingUploads', 'closeHistory', 'comps']) {
+  for (const key of ['payments', 'pendingUploads', 'closeHistory', 'comps', 'pendingCredits']) {
     if (raw[key] !== undefined && !Array.isArray(raw[key])) throw new Error(`${key} 형식이 올바르지 않습니다`);
   }
   const base = defaultState();
@@ -144,6 +145,7 @@ export function normalizeState(raw) {
     payments: raw.payments ?? [],
     pendingUploads: raw.pendingUploads ?? [],
     comps: raw.comps ?? [],
+    pendingCredits: raw.pendingCredits ?? [],
     closeHistory: (raw.closeHistory ?? []).slice(0, CLOSE_HISTORY_LIMIT),
   };
 }

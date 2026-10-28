@@ -224,6 +224,30 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 @media (prefers-color-scheme: dark) { .room-money div { background: rgb(0 0 0 / .25); } }
 .cancel-note { margin: 8px 0 2px; font-size: .85rem; }
 
+.credit-fold { margin: 0 0 12px; border: 1px dashed var(--line); border-radius: 12px; padding: 10px 12px; }
+.credit-fold > summary { font-weight: 700; font-size: .9rem; }
+.credit-fold[open] > summary { margin-bottom: 10px; }
+.credit-amount { display: flex; align-items: flex-end; gap: 8px; }
+.credit-amount .field { flex: 1; }
+.credit-amount .btn { margin-bottom: 10px; min-height: 44px; }
+.credit-hit { color: var(--ok); font-size: .9rem; }
+.credit-hits { display: flex; flex-wrap: wrap; gap: 6px; }
+.credit-hits .chip { min-height: 36px; font-size: .85rem; }
+.sum .credit-line dt, .sum .credit-line dd { color: var(--accent); font-weight: 700; }
+.credit-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; text-align: left;
+  padding: 10px 0; border: 0; border-top: 1px solid var(--line); background: none; cursor: pointer;
+}
+.credit-row .who { display: flex; flex-direction: column; }
+.credit-row small { color: var(--muted); }
+.credit-row.settled .bal { color: var(--ok); font-size: .85rem; }
+.bal { color: var(--accent); font-variant-numeric: tabular-nums; }
+.credit-entries { list-style: none; margin: 8px 0; padding: 0; }
+.credit-entries li { padding: 8px 0; border-top: 1px solid var(--line); }
+.credit-entries small { display: block; color: var(--muted); }
+.credit-entries .repay b { color: var(--ok); }
+.repay-form { border-top: 2px solid var(--line); margin-top: 8px; }
+
 .calc { margin-top: 16px; }
 .calc h4 { margin: 12px 0 2px; }
 .calc-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
