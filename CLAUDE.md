@@ -34,7 +34,7 @@
 - 서비스(무료) 제공: 세션 `freeQuantities`(청구 안 함, `unpaidLines`에 들어가지 않음). 룸을 비울 때(`closeSession`: 종료·결제 후 종료·이용안함) `freeItems`를 `state.comps`에 기록하고, 일 마감 시 `buildCloseRecord({comps})`가 `by_item`에 kind 'comp'(sales 0, value = 정가 × 수량)로 넣는다. 금액 합계(net_total 등)는 변하지 않는다. 서버 스키마 변경 없음(by_item jsonb).
 - 외상: 결제 시 외상분을 판매액에서 먼저 뺀다(현금 기준, 카드 가산 없음, 할인은 받는 부분에만) — `calcPaymentWithCredit`. 결제 기록 `base` = 판매액 − 외상(그날 매출), `coveredBase` = 판매액, `credit`, `creditEntryId`(이름·전화번호는 결제 기록에 넣지 않음). 매출은 갚은 날: 상환은 `type: 'repay'` 결제 기록(roomId null, lines [], base = 장부 차감액, 카드면 surcharge 10%). 마감 `by_category`에 `credit_issued`, `credit_repaid`(gross_sales = room+liquor+service − issued + repaid).
 - 외상 장부 서버: `supabase/credit.sql`(credit_accounts 전화번호 unique, credit_entries issue/repay, RPC list/get/add/delete, 상환 잔액 초과·잔액 남은 삭제를 서버에서 거부). 외상 발생은 `pendingCredits`에 먼저 넣고 `uploadCredits`로 전송(재전송 안전: entry id), 상환은 서버 기록 성공 후에만 매출 반영.
-- 뒤로가기: 화면을 한 단계 깊이 들어갈 때(룸 화면·결제 창·외상 내역·룸 외 탭) `navPush()`로 히스토리를 쌓고, `popstate`에서 `goBackInApp()`으로 한 단계 되돌린다. 룸 목록(맨 위)에서는 히스토리 한 칸을 다시 채워 앱이 닫히지 않게 한다.
+- 뒤로가기: 화면을 한 단계 깊이 들어갈 때(룸 화면·결제 창·외상 내역·룸 외 탭) `navPush()`로 히스토리를 쌓고, `popstate`에서 `goBackInApp()`으로 한 단계 되돌린다. 룸 목록(맨 위)에서는 '앱을 닫을까요?'를 묻는다. 아니오 → 히스토리 한 칸을 다시 채움. 예 → `history.go(-(navDepth+1))`로 앱 기록을 건너뛰고, 이동이 안 되면(이전 페이지 없음) `window.close()` 시도 후 `allowExit`로 다음 뒤로가기를 막지 않음(화면을 누르면 보호 재설정).
 - 간이 계산기: `ui.calc`(화면 상태만, 저장·매출 기록 없음). 금액은 `calcPayment(판매액, 수단, 0)`, 더치페이는 `splitBill`(1인 100원 단위 올림, 차액 extra).
 - 접기 영역 펼침 상태는 `ui.folds`(basic/rooms/items/calc)에 두고 toggle 이벤트(capture)로 갱신한다.
 - 룸 이용안함: 기타 서비스가 하나라도 있으면 불가(버튼 숨김 + 동작에서도 차단). [이용안함 · 룸 비우기] 버튼으로 확인 후 세션을 비운다. 미결제 주문은 취소, 이미 받은 결제는 매출에 남는다. 이용안함 건수는 따로 기록하지 않는다.

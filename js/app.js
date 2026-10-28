@@ -1433,6 +1433,11 @@ function setDraft(path, value) {
 }
 
 app.addEventListener('click', (e) => {
+  // 닫기를 안내한 뒤 계속 앱을 쓰면 뒤로가기 보호를 다시 켠다.
+  if (allowExit) {
+    navPush();
+    if (ui.notice === '뒤로가기를 한 번 더 누르면 앱이 닫힙니다.') ui.notice = '';
+  }
   const el = e.target.closest('[data-action]');
   if (!el || el.disabled) return;
   actions[el.dataset.action]?.(el);
@@ -1479,10 +1484,17 @@ app.addEventListener('change', (e) => {
 
 // ── 휴대폰 뒤로가기 ──
 // 뒤로가기는 앱 안에서 한 단계씩 돌아간다: 결제 창 → 외상 내역 → 룸 화면 → 룸 목록(룸 탭).
-// 룸 목록에서는 브라우저·앱이 닫히지 않도록 히스토리 한 칸을 다시 채운다.
+// 룸 목록에서 누르면 '앱을 닫을까요?'를 묻는다. 웹은 브라우저를 직접 닫을 수 없으므로, 예를 고르면
+// 앱이 쌓은 기록을 모두 건너뛰고 실제 뒤로가기를 한다(설치한 앱은 종료, 브라우저는 이전 페이지/탭 닫힘).
+let navDepth = 0; // 첫 화면(root) 위에 쌓인 앱 기록 수
+let exiting = false; // '예'를 고른 뒤 이전 페이지로 나가는 중
+let allowExit = false; // 이전 페이지가 없어 다음 뒤로가기로 앱이 닫히도록 기록 칸을 비워 둔 상태
+
 function navPush() {
   try {
     history.pushState({ storeManager: 'nav' }, '');
+    navDepth += 1;
+    allowExit = false;
   } catch {
     /* 히스토리를 못 쓰는 환경이면 기본 동작을 따른다 */
   }
@@ -1498,8 +1510,23 @@ function goBackInApp() {
 }
 
 window.addEventListener('popstate', () => {
-  const moved = goBackInApp();
-  if (!moved) ui.notice = '룸 목록입니다. 앱을 나가려면 휴대폰 홈 버튼을 사용해 주세요.';
+  if (exiting || allowExit) return;
+  navDepth = Math.max(0, navDepth - 1);
+  if (!goBackInApp()) {
+    if (confirm('앱을 닫을까요?')) {
+      exiting = true;
+      history.go(-(navDepth + 1)); // root 위의 앱 기록과 root까지 건너뛴다
+      // 이전 페이지가 없으면(설치 앱을 바로 연 경우 등) 이동하지 않는다. 그때는 닫기를 시도하고,
+      // 기록 칸을 비워 둔 채 '한 번 더 누르면 닫힘'을 안내한다(다음 뒤로가기는 앱이 막지 않음).
+      setTimeout(() => {
+        exiting = false;
+        window.close();
+        allowExit = true;
+        notify('뒤로가기를 한 번 더 누르면 앱이 닫힙니다.');
+      }, 400);
+      return;
+    }
+  }
   if (history.state?.storeManager !== 'nav') navPush(); // 다음 뒤로가기도 앱 안에서 처리
   render();
   window.scrollTo(0, 0);
