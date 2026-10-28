@@ -542,18 +542,24 @@ function linesTable(lines) {
 
 function historySection() {
   const list = [...state.payments].reverse();
+  const issued = list.reduce((a, p) => a + (p.credit || 0), 0);
+  const repaid = list.filter((p) => p.type === 'repay').reduce((a, p) => a + p.base, 0);
   return `<section class="card">
     <h3>결제 내역 ${list.length ? `(${list.length}건)` : ''}</h3>
+    ${issued || repaid ? `<p class="credit-note">${issued ? `외상 발생 ${won(issued)}` : ''}${issued && repaid ? ' · ' : ''}${repaid ? `외상 회수 ${won(repaid)}` : ''}</p>` : ''}
     ${list.length ? '' : '<p class="muted">이번 영업일 결제가 아직 없습니다.</p>'}
     ${list.map((p) => `<details class="payment">
       <summary>
         <span>${fmtTime(p.paidAt)} · ${esc(p.roomName)}</span>
+        ${p.credit ? `<span class="badge credit">외상 ${won(p.credit)}</span>` : ''}
         <span class="badge ${p.method}">${METHOD_LABELS[p.method]}</span>
         <b>${won(p.amount)}</b>
       </summary>
       ${linesTable(p.lines)}
       <dl class="sum">
-        <div><dt>판매액</dt><dd>${won(p.base)}</dd></div>
+        ${p.credit ? `<div><dt>판매액</dt><dd>${won(p.coveredBase)}</dd></div>
+          <div class="credit-line"><dt>외상 (나중에 받음)</dt><dd>−${won(p.credit)}</dd></div>` : ''}
+        <div><dt>${p.type === 'repay' ? '외상 회수(장부 차감)' : p.credit ? '이번에 받은 판매액' : '판매액'}</dt><dd>${won(p.base)}</dd></div>
         ${p.surcharge ? `<div><dt>카드 가산</dt><dd>+${won(p.surcharge)}</dd></div>` : ''}
         ${p.discount ? `<div><dt>할인</dt><dd>−${won(p.discount)}</dd></div>` : ''}
         <div class="grand"><dt>받은 금액</dt><dd>${won(p.amount)}</dd></div>
@@ -743,7 +749,7 @@ function calendarSection() {
       const cls = ['cal-cell', e && 'has', date === today && 'today', date === cal.selected && 'sel'].filter(Boolean).join(' ');
       return `<button class="${cls}" data-action="cal-day" data-date="${date}" ${e ? '' : 'disabled'}
         aria-label="${Number(date.slice(8))}일${e ? ` 매출 ${won(e.net)}` : ''}">
-        <span class="cal-d">${Number(date.slice(8))}</span>${e ? `<span class="cal-amt">${compactWon(e.net)}</span>` : ''}
+        <span class="cal-d">${Number(date.slice(8))}</span>${e ? `<span class="cal-amt">${compactWon(e.net)}</span>` : ''}${e?.creditIssued ? `<span class="cal-credit">외상 ${compactWon(e.creditIssued)}</span>` : ''}
       </button>`;
     })
     .join('');
@@ -763,6 +769,7 @@ function calendarSection() {
     ${cal.loading ? '<p class="muted">불러오는 중…</p>' : source}
     ${selected ? `<div class="cal-detail">
       <h4>${esc(cal.selected)} 매출</h4>
+      ${selected.creditIssued || selected.creditRepaid ? `<p class="credit-note">${selected.creditIssued ? `외상 발생 ${won(selected.creditIssued)} (매출 제외)` : ''}${selected.creditIssued && selected.creditRepaid ? ' · ' : ''}${selected.creditRepaid ? `외상 회수 ${won(selected.creditRepaid)} (매출 포함)` : ''}</p>` : ''}
       ${selected.closes.map((r) => `<p class="muted">마감 ${fmtDateTime(r.closed_at)}${r.closed_by ? ` · ${esc(r.closed_by)}` : ''} · 결제 ${r.payment_count}건</p>
         ${closeBreakdown(r)}`).join('')}
     </div>` : cal.data && byDate.size ? '<p class="muted">날짜를 누르면 그날 매출 상세를 봅니다.</p>' : ''}
@@ -844,6 +851,7 @@ const actions = {
   sync: () => syncAll(),
   tab: (el) => {
     if (ui.tab === el.dataset.tab && el.dataset.tab === 'rooms') ui.roomId = null;
+    if (ui.tab !== el.dataset.tab && el.dataset.tab !== 'rooms') navPush();
     ui.tab = el.dataset.tab;
     render();
     if (ui.tab === 'sales' && !ui.calendar.data && !ui.calendar.loading) loadMonth(ui.calendar.month);
@@ -858,10 +866,12 @@ const actions = {
     state.sessions[id] = { id: newId(), startedAt: now, hours: 0, quantities: {}, paidHours: 0, paidQuantities: {}, freeQuantities: {}, guests: 0, declined: 0, services: [] };
     if (!state.businessDay.openedAt) state.businessDay.openedAt = now;
     ui.roomId = id;
+    navPush();
     commit();
   },
   'open-room': (el) => {
     ui.roomId = el.dataset.room;
+    navPush();
     render();
     window.scrollTo(0, 0);
   },
@@ -922,9 +932,13 @@ const actions = {
   free: (el) => updateSession((s) => changeFreeCount(s, el.dataset.key, Number(el.dataset.delta))),
   'open-payment': () => {
     ui.payment = newPaymentUi(ui.roomId, false);
+    navPush();
     render();
   },
-  'credit-open': (el) => openCreditAccount(el.dataset.id),
+  'credit-open': (el) => {
+    navPush();
+    openCreditAccount(el.dataset.id);
+  },
   'credit-back': () => {
     ui.credit.detail = null;
     render();
@@ -1011,6 +1025,7 @@ const actions = {
     const s = state.sessions[room.id];
     if (balanceOf(room, s) > 0) {
       ui.payment = newPaymentUi(room.id, true);
+      navPush();
       render();
       return;
     }
@@ -1223,7 +1238,9 @@ async function closeDay() {
   });
   const empty = record.payment_count === 0 ? '\n\n※ 이번 영업일에 결제가 없습니다.' : '';
   const ok = confirm(
-    `${record.business_date} 영업을 마감합니다.\n결제 ${record.payment_count}건 · 총매출 ${won(record.net_total)}${empty}\n\n` +
+    `${record.business_date} 영업을 마감합니다.\n결제 ${record.payment_count}건 · 총매출 ${won(record.net_total)}` +
+      `${record.by_category.credit_issued ? `\n외상 발생 ${won(record.by_category.credit_issued)} (매출 제외)` : ''}` +
+      `${record.by_category.credit_repaid ? `\n외상 회수 ${won(record.by_category.credit_repaid)} (매출 포함)` : ''}${empty}\n\n` +
       '마감하면 서버에 저장하고 새 영업일을 시작합니다.',
   );
   if (!ok) return;
@@ -1460,6 +1477,34 @@ app.addEventListener('change', (e) => {
   } else onInput(e);
 });
 
+// ── 휴대폰 뒤로가기 ──
+// 뒤로가기는 앱 안에서 한 단계씩 돌아간다: 결제 창 → 외상 내역 → 룸 화면 → 룸 목록(룸 탭).
+// 룸 목록에서는 브라우저·앱이 닫히지 않도록 히스토리 한 칸을 다시 채운다.
+function navPush() {
+  try {
+    history.pushState({ storeManager: 'nav' }, '');
+  } catch {
+    /* 히스토리를 못 쓰는 환경이면 기본 동작을 따른다 */
+  }
+}
+
+function goBackInApp() {
+  if (ui.payment) ui.payment = null;
+  else if (ui.tab === 'sales' && ui.credit.detail) ui.credit.detail = null;
+  else if (ui.tab === 'rooms' && ui.roomId) ui.roomId = null;
+  else if (ui.tab !== 'rooms') ui.tab = 'rooms';
+  else return false;
+  return true;
+}
+
+window.addEventListener('popstate', () => {
+  const moved = goBackInApp();
+  if (!moved) ui.notice = '룸 목록입니다. 앱을 나가려면 휴대폰 홈 버튼을 사용해 주세요.';
+  if (history.state?.storeManager !== 'nav') navPush(); // 다음 뒤로가기도 앱 안에서 처리
+  render();
+  window.scrollTo(0, 0);
+});
+
 // toggle 이벤트는 버블링되지 않아 capture로 받는다. 다시 그려도 접힘 상태를 유지한다.
 app.addEventListener(
   'toggle',
@@ -1560,5 +1605,11 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   });
 }
 
+try {
+  history.replaceState({ storeManager: 'root' }, '');
+} catch {
+  /* 무시 */
+}
+navPush();
 render();
 syncSettings().then(() => uploadPending()).then(() => uploadCredits());

@@ -234,6 +234,9 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .credit-hits { display: flex; flex-wrap: wrap; gap: 6px; }
 .credit-hits .chip { min-height: 36px; font-size: .85rem; }
 .sum .credit-line dt, .sum .credit-line dd { color: var(--accent); font-weight: 700; }
+.badge.credit { background: var(--accent); color: #fff; }
+.credit-note { color: var(--accent); font-weight: 700; font-size: .9rem; margin: 4px 0 8px; }
+.cal-credit { font-size: .65rem; font-weight: 800; color: var(--danger); white-space: nowrap; }
 .credit-row {
   display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; text-align: left;
   padding: 10px 0; border: 0; border-top: 1px solid var(--line); background: none; cursor: pointer;

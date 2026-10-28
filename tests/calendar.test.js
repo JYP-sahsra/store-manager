@@ -34,6 +34,16 @@ test('같은 날 마감 여러 건은 합친다', () => {
   assert.equal(map.get('2026-10-26').closes.length, 2);
 });
 
+test('날짜별 외상 발생·회수 합계(예전 기록은 0)', () => {
+  const map = closesByDate([
+    { business_date: '2026-10-28', net_total: 77000, payment_count: 1, by_category: { credit_issued: 50000, credit_repaid: 0 } },
+    { business_date: '2026-10-28', net_total: 33000, payment_count: 1, by_category: { credit_issued: 0, credit_repaid: 30000 } },
+    { business_date: '2026-10-27', net_total: 10000, payment_count: 1, by_category: { room: 10000 } },
+  ]);
+  assert.deepEqual([map.get('2026-10-28').creditIssued, map.get('2026-10-28').creditRepaid], [50000, 30000]);
+  assert.deepEqual([map.get('2026-10-27').creditIssued, map.get('2026-10-27').creditRepaid], [0, 0]);
+});
+
 test('달력용 짧은 금액(만원 단위)', () => {
   assert.equal(compactWon(96600), '9.7만');
   assert.equal(compactWon(5000), '0.5만');

@@ -30,14 +30,18 @@ export function calendarCells(month) {
   return cells;
 }
 
-// 같은 영업일에 마감이 여러 번 있으면 합친다.
+// 같은 영업일에 마감이 여러 번 있으면 합친다. creditIssued/creditRepaid = 그날 외상 발생·회수 합계
 export function closesByDate(closes) {
   const map = new Map();
   for (const r of closes) {
-    if (!map.has(r.business_date)) map.set(r.business_date, { date: r.business_date, net: 0, count: 0, closes: [] });
+    if (!map.has(r.business_date)) {
+      map.set(r.business_date, { date: r.business_date, net: 0, count: 0, creditIssued: 0, creditRepaid: 0, closes: [] });
+    }
     const e = map.get(r.business_date);
     e.net += r.net_total;
     e.count += r.payment_count;
+    e.creditIssued += r.by_category?.credit_issued || 0;
+    e.creditRepaid += r.by_category?.credit_repaid || 0;
     e.closes.push(r);
   }
   return map;
