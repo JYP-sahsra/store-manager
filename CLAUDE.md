@@ -30,7 +30,8 @@
 - 방문 인원(`guests`): 대기 = 방문 − 서비스 건수(− `declined`, 현재 화면에서 입력하지 않아 항상 0). 현황 상태 `guestSummary` = none/waiting/partial/all. 금액과 무관한 운영 정보이며 일 마감 기록(서버)에는 들어가지 않는다.
 - 룸 상태(`calc.roomStatus`, 룸 운영의 핵심은 시간제 서비스): 서비스 초과 'over'(추가 결제 필요, 결제를 마쳤어도) > 미결제 'due' > 종료 임박 'check'(확인 필요) > 주문 전 'fresh' > 대기 인원 'waiting' > 'normal'(정상 진행중). 타일에는 서비스 인원별 남은/초과 시간 칩을 둔다.
 - 초과 자동 청구: 종료 시각을 넘긴 서비스는 `overtimeHours`(올림(초과 분/60), 최소 1)만큼 `unpaidLines`에 자동 포함(줄에 `overtimeHours` 표시). 저장된 `hours`는 그대로 두고, 결제 시 `markSessionPaid(session, now)`가 hours를 늘려 확정한다. 두 함수에 같은 `now`를 넘긴다. `overtimeCharge` = 미결제에 포함된 초과 금액(표시용).
-- 룸 타일 식음료 표시: `drinkCounts` = 식음료 품목별 누적 수량(결제 여부 무관).
+- 룸 타일 식음료 표시: `drinkCounts` = 식음료 품목별 누적 수량(결제 여부 무관) + free(서비스 수량).
+- 서비스(무료) 제공: 세션 `freeQuantities`(청구 안 함, `unpaidLines`에 들어가지 않음). 룸을 비울 때(`closeSession`: 종료·결제 후 종료·이용안함) `freeItems`를 `state.comps`에 기록하고, 일 마감 시 `buildCloseRecord({comps})`가 `by_item`에 kind 'comp'(sales 0, value = 정가 × 수량)로 넣는다. 금액 합계(net_total 등)는 변하지 않는다. 서버 스키마 변경 없음(by_item jsonb).
 - 간이 계산기: `ui.calc`(화면 상태만, 저장·매출 기록 없음). 금액은 `calcPayment(판매액, 수단, 0)`, 더치페이는 `splitBill`(1인 100원 단위 올림, 차액 extra).
 - 접기 영역 펼침 상태는 `ui.folds`(basic/rooms/items/calc)에 두고 toggle 이벤트(capture)로 갱신한다.
 - 룸 이용안함: 기타 서비스가 하나라도 있으면 불가(버튼 숨김 + 동작에서도 차단). [이용안함 · 룸 비우기] 버튼으로 확인 후 세션을 비운다. 미결제 주문은 취소, 이미 받은 결제는 매출에 남는다. 이용안함 건수는 따로 기록하지 않는다.
@@ -46,7 +47,8 @@
 
 - localStorage 키 `storeManager.v1`, `version: 1`. 구조를 바꾸면 version을 올리고 `normalizeState`에 변환 코드를 추가한다.
 - 설정(`settings`)은 `settingsVersion`(현재 2)을 가진다. v1(필드 없음)의 `dayCutoffHour: 0`은 12로 옮긴다(`normalizeSettings`). 서버 `store_settings.data`도 같은 형식.
-- 세션(`sessions.roomN`): `id, startedAt, hours, quantities, paidHours, paidQuantities, guests, declined, services[{id, itemId, startedAt, hours, paidHours}]` (`services`가 없던 예전 데이터는 빈 목록으로 정규화)
+- 영업일 서비스 제공 기록(`comps[]`): `id, roomId, roomName, sessionId, at, items[{itemId, name, qty, listPrice}]` — 마감 때 비운다.
+- 세션(`sessions.roomN`): `id, startedAt, hours, quantities, paidHours, paidQuantities, freeQuantities, guests, declined, services[{id, itemId, startedAt, hours, paidHours}]` (`services`가 없던 예전 데이터는 빈 목록으로 정규화)
 - 결제(`payments[]`): `id, roomId, roomName, sessionId, paidAt, method('cash'|'card'), lines[{kind('room'|'liquor'|'service'), itemId, name, unitPrice, qty, subtotal, serviceId?, startedAt?, overtimeHours?}], coveredBase, base, surcharge, discount, amount` (시간제 서비스 줄은 qty = 시간)
 - 일 마감 기록: `buildCloseRecord()` 결과 = DB `day_closes` 컬럼(snake_case). 필드를 바꾸면 `schema.sql`의 `submit_day_close`도 같이 바꾼다.
 - 백업 파일: `{ app: 'store-manager', exportedAt, state(PIN 제외), close }`

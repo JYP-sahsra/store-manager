@@ -224,12 +224,46 @@ export function markSessionPaid(session, now = new Date()) {
   };
 }
 
-// 식음료 품목별로 지금까지 나간 수량(결제 여부와 무관, 수량 많은 순)
+// 식음료 품목별로 지금까지 나간 수량(결제 여부와 무관, 수량 많은 순). free = 서비스(무료)로 나간 수량
 export function drinkCounts(session, items) {
+  const free = session.freeQuantities || {};
   return items
-    .filter((i) => i.category === 'liquor' && (session.quantities[i.id] || 0) > 0)
-    .map((i) => ({ name: i.name, qty: session.quantities[i.id] }))
-    .sort((a, b) => b.qty - a.qty);
+    .filter((i) => i.category === 'liquor' && ((session.quantities[i.id] || 0) > 0 || (free[i.id] || 0) > 0))
+    .map((i) => ({ name: i.name, qty: session.quantities[i.id] || 0, free: free[i.id] || 0 }))
+    .sort((a, b) => b.qty + b.free - (a.qty + a.free));
+}
+
+// ── 서비스(무료) 제공 ──
+// 손님에게 무료로 내준 식음료. 금액에는 들어가지 않고(미청구), 수량과 정가 기준 금액을 기록만 한다.
+
+export function changeFreeCount(session, itemId, delta) {
+  const free = session.freeQuantities || {};
+  const next = (free[itemId] || 0) + delta;
+  if (next < 0) return session;
+  return { ...session, freeQuantities: { ...free, [itemId]: next } };
+}
+
+// 세션에서 무료로 내준 품목(정가는 지금 설정 가격으로 기록)
+export function freeItems(session, items) {
+  const free = session.freeQuantities || {};
+  return items
+    .filter((i) => (free[i.id] || 0) > 0)
+    .map((i) => ({ itemId: i.id, name: i.name, qty: free[i.id], listPrice: i.price }));
+}
+
+// 영업일 동안의 서비스 제공 기록을 품목별로 합친다. value = 정가 기준 금액(매출 아님)
+export function summarizeComps(comps) {
+  const map = new Map();
+  for (const c of comps) {
+    for (const it of c.items) {
+      const key = `${it.name}|${it.listPrice}`;
+      if (!map.has(key)) map.set(key, { kind: 'comp', name: it.name, unitPrice: it.listPrice, qty: 0, sales: 0, value: 0 });
+      const e = map.get(key);
+      e.qty += it.qty;
+      e.value += it.qty * it.listPrice;
+    }
+  }
+  return [...map.values()].sort((a, b) => b.qty - a.qty);
 }
 
 // 결제한 수량 아래로는 줄일 수 없다(환불은 범위 밖).
@@ -307,7 +341,8 @@ export function isStaleBusinessDay(openedAt, now, cutoffHour = 0) {
 }
 
 // 일 마감 기록. 필드 이름은 DB(day_closes) 컬럼과 같다.
-export function buildCloseRecord({ id, openedAt, closedAt, closedBy, cutoffHour, payments }) {
+// 서비스(무료) 제공은 금액 합계에 넣지 않고 by_item에 kind 'comp'(sales 0, value = 정가 기준) 항목으로 함께 저장한다.
+export function buildCloseRecord({ id, openedAt, closedAt, closedBy, cutoffHour, payments, comps = [] }) {
   const s = summarizeDay(payments);
   return {
     id,
@@ -324,7 +359,7 @@ export function buildCloseRecord({ id, openedAt, closedAt, closedBy, cutoffHour,
     payment_count: s.paymentCount,
     by_room: s.byRoom,
     by_category: s.byCategory,
-    by_item: s.byItem,
+    by_item: [...s.byItem, ...summarizeComps(comps)],
     payments,
   };
 }

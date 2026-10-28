@@ -25,6 +25,8 @@ import {
   overtimeHours,
   drinkCounts,
   splitBill,
+  changeFreeCount,
+  freeItems,
   CATEGORY_LABELS,
   METHOD_LABELS,
   HOURS_KEY,
@@ -262,7 +264,7 @@ function roomCard(room) {
       <span class="status-badge st-${status}">${ROOM_STATUS_LABELS[status](g)}</span></div>
     <div class="room-meta">${meta}</div>
     ${services.length ? `<div class="svc-grid">${services.map((v, i) => serviceTimeChip(v, i + 1, now)).join('')}</div>` : ''}
-    ${drinks.length ? `<div class="drink-line"><span class="muted">식음료</span>${drinks.map((d) => `<span class="drink">${esc(d.name)} <b>${d.qty}</b></span>`).join('')}</div>` : ''}
+    ${drinks.length ? `<div class="drink-line"><span class="muted">식음료</span>${drinks.map((d) => `<span class="drink">${esc(d.name)}${d.qty ? ` <b>${d.qty}</b>` : ''}${d.free ? ` <span class="free-tag">서비스 ${d.free}</span>` : ''}</span>`).join('')}</div>` : ''}
     <dl class="room-money">
       <div><dt>결제 완료</dt><dd>${won(paid)}</dd></div>
       <div class="${extra ? 'extra' : balance ? 'due' : ''}"><dt>미결제</dt><dd>${won(balance)}</dd>
@@ -304,10 +306,12 @@ function counterRow({ label, sub, key, qty, paid }) {
 }
 
 // 셀프 주문형 메뉴 카드. 담긴 수량이 있으면 강조하고, 결제한 수량 아래로는 줄일 수 없다.
+// 식음료 카드에는 서비스(무료) 수량 줄을 함께 둔다(청구하지 않고 기록만).
 function menuCard(item, s) {
   const qty = s.quantities[item.id] || 0;
   const paid = s.paidQuantities[item.id] || 0;
-  return `<div class="menu-card ${qty ? 'picked' : ''}">
+  const free = (s.freeQuantities || {})[item.id] || 0;
+  return `<div class="menu-card ${qty ? 'picked' : ''} ${free ? 'has-free' : ''}">
     <div class="menu-name">${esc(item.name)}</div>
     <div class="menu-price">${won(item.price)}${paid ? ` · 결제 ${paid}` : ''}</div>
     <div class="counter">
@@ -315,6 +319,12 @@ function menuCard(item, s) {
       <span class="qty" aria-label="${esc(item.name)} 수량">${qty}</span>
       <button class="step" data-action="inc" data-key="${esc(item.id)}" aria-label="${esc(item.name)} 담기">+</button>
     </div>
+    ${item.category === 'liquor' ? `<div class="free-row">
+      <span>서비스</span>
+      <button class="mini" data-action="free" data-key="${esc(item.id)}" data-delta="-1" ${free ? '' : 'disabled'} aria-label="${esc(item.name)} 서비스 빼기">−</button>
+      <b>${free}</b>
+      <button class="mini" data-action="free" data-key="${esc(item.id)}" data-delta="1" aria-label="${esc(item.name)} 서비스로 제공">+</button>
+    </div>` : ''}
   </div>`;
 }
 
@@ -460,6 +470,7 @@ function paymentSheet() {
       <h2 id="pay-title">${esc(room.name)} 결제</h2>
       ${paid ? `<p class="muted">앞서 결제한 금액 ${won(paid)} · 아래는 이번에 받을 주문입니다.</p>` : ''}
       ${endAfter ? '<p class="warn">미결제 금액이 있습니다. 결제하면 룸을 종료합니다.</p>' : ''}
+      ${freeItems(s, state.settings.items).length ? `<p class="muted">서비스(무료, 청구 안 함): ${freeItems(s, state.settings.items).map((f) => `${esc(f.name)} ${f.qty}`).join(' · ')}</p>` : ''}
       ${linesTable(lines)}
       <div class="segmented big" role="radiogroup" aria-label="결제수단">
         <button role="radio" aria-checked="${method === 'cash'}" data-action="pay-method" data-method="cash">현금<small>판매액 그대로</small></button>
@@ -511,6 +522,8 @@ function historySection() {
 // 마감 기록(DB 컬럼 형식)의 매상 구조
 function closeBreakdown(r) {
   const cat = r.by_category || {};
+  const sold = (r.by_item || []).filter((x) => x.kind !== 'comp');
+  const comps = (r.by_item || []).filter((x) => x.kind === 'comp');
   return `
     <div class="big-total"><span>총매출(받은 금액)</span><b>${won(r.net_total)}</b></div>
     <dl class="sum">
@@ -520,7 +533,7 @@ function closeBreakdown(r) {
     <h4>매상 구조</h4>
     <dl class="sum">
       <div><dt>룸 이용</dt><dd>${won(cat.room)}</dd></div>
-      <div><dt>주류</dt><dd>${won(cat.liquor)}</dd></div>
+      <div><dt>식음료</dt><dd>${won(cat.liquor)}</dd></div>
       <div><dt>기타 서비스</dt><dd>${won(cat.service)}</dd></div>
       <div class="sub"><dt>판매액 합계</dt><dd>${won(r.gross_sales)}</dd></div>
       <div><dt>카드 가산</dt><dd>+${won(r.card_surcharge_total)}</dd></div>
@@ -531,9 +544,12 @@ function closeBreakdown(r) {
     ${(r.by_room || []).length
       ? `<dl class="sum">${r.by_room.map((x) => `<div><dt>${esc(x.roomName)} (${x.count}건)</dt><dd>${won(x.net)}</dd></div>`).join('')}</dl>`
       : '<p class="muted">없음</p>'}
-    ${(r.by_item || []).length ? `<details><summary>품목별 판매</summary>
-      <table class="lines"><tbody>${r.by_item.map((x) => `<tr><td>${esc(x.name)}</td><td class="num">${x.qty}</td><td class="num">${won(x.sales)}</td></tr>`).join('')}</tbody></table>
-    </details>` : ''}`;
+    ${sold.length ? `<details><summary>품목별 판매</summary>
+      <table class="lines"><tbody>${sold.map((x) => `<tr><td>${esc(x.name)}</td><td class="num">${x.qty}</td><td class="num">${won(x.sales)}</td></tr>`).join('')}</tbody></table>
+    </details>` : ''}
+    ${comps.length ? `<h4>서비스 제공 (무료, 매출 아님)</h4>
+      <table class="lines"><tbody>${comps.map((x) => `<tr><td>${esc(x.name)}</td><td class="num">${x.qty}</td><td class="num muted">정가 ${won(x.value)}</td></tr>`).join('')}</tbody></table>
+      <p class="muted">합계 ${comps.reduce((a, x) => a + x.qty, 0)}개 · 정가 기준 ${won(comps.reduce((a, x) => a + x.value, 0))}</p>` : ''}`;
 }
 
 // 매출 탭: 이번 영업일 요약 → 일 마감 → 월 매출 캘린더 → 오늘 결제 내역
@@ -545,6 +561,7 @@ function salesView() {
     closedBy: state.managerName,
     cutoffHour: state.settings.dayCutoffHour,
     payments: state.payments,
+    comps: state.comps,
   });
   const active = activeRooms();
   const pending = state.pendingUploads;
@@ -693,7 +710,7 @@ const actions = {
     }
     const now = new Date().toISOString();
     const id = el.dataset.room;
-    state.sessions[id] = { id: newId(), startedAt: now, hours: 0, quantities: {}, paidHours: 0, paidQuantities: {}, guests: 0, declined: 0, services: [] };
+    state.sessions[id] = { id: newId(), startedAt: now, hours: 0, quantities: {}, paidHours: 0, paidQuantities: {}, freeQuantities: {}, guests: 0, declined: 0, services: [] };
     if (!state.businessDay.openedAt) state.businessDay.openedAt = now;
     ui.roomId = id;
     commit();
@@ -742,7 +759,7 @@ const actions = {
       paid ? `이미 받은 ${won(paid)}는 매출에 그대로 남습니다.` : '',
     ].filter(Boolean).join('\n');
     if (!confirm(`${room.name}을(를) 이용안함으로 처리하고 비울까요?${detail ? `\n\n${detail}` : ''}`)) return;
-    state.sessions[room.id] = null;
+    closeSession(room.id);
     ui.roomId = null;
     ui.notice = `${room.name}을(를) 이용안함으로 비웠습니다.`;
     commit();
@@ -757,6 +774,7 @@ const actions = {
   },
   inc: (el) => updateCount(el.dataset.key, 1),
   dec: (el) => updateCount(el.dataset.key, -1),
+  free: (el) => updateSession((s) => changeFreeCount(s, el.dataset.key, Number(el.dataset.delta))),
   'open-payment': () => {
     ui.payment = { roomId: ui.roomId, method: 'cash', discountText: '', endAfter: false };
     render();
@@ -769,8 +787,8 @@ const actions = {
       render();
       return;
     }
-    if (!confirm(`${room.name}을(를) 종료할까요?\n다음 손님은 [시작]을 눌러 새로 시작합니다.`)) return;
-    state.sessions[room.id] = null;
+    if (!confirm(`${room.name}을(를) 종료할까요?\n다음 손님은 [손님 입장]을 눌러 새로 시작합니다.`)) return;
+    closeSession(room.id);
     ui.roomId = null;
     commit();
   },
@@ -819,6 +837,19 @@ const actions = {
   },
 };
 
+// 룸을 비운다. 서비스(무료)로 내준 식음료가 있으면 이번 영업일 제공 기록(comps)에 남긴다.
+function closeSession(roomId) {
+  const s = state.sessions[roomId];
+  const given = s ? freeItems(s, state.settings.items) : [];
+  if (given.length) {
+    state.comps = [
+      ...state.comps,
+      { id: newId(), roomId, roomName: roomById(roomId).name, sessionId: s.id, at: new Date().toISOString(), items: given },
+    ];
+  }
+  state.sessions[roomId] = null;
+}
+
 function updateSession(change) {
   const s = state.sessions[ui.roomId];
   const next = change(s);
@@ -860,7 +891,7 @@ function confirmPayment() {
   ui.payment = null;
   ui.notice = `${room.name} ${METHOD_LABELS[method]} ${won(result.amount)} 결제했습니다.`;
   if (endAfter) {
-    state.sessions[roomId] = null;
+    closeSession(roomId);
     ui.roomId = null;
     ui.notice += ' 룸을 종료했습니다.';
   }
@@ -880,6 +911,7 @@ async function closeDay() {
     closedBy: state.managerName,
     cutoffHour: state.settings.dayCutoffHour,
     payments: state.payments,
+    comps: state.comps,
   });
   const empty = record.payment_count === 0 ? '\n\n※ 이번 영업일에 결제가 없습니다.' : '';
   const ok = confirm(
@@ -892,6 +924,7 @@ async function closeDay() {
   state.pendingUploads = [...state.pendingUploads.filter((p) => p.id !== record.id), record];
   state.closeHistory = addCloseHistory(state.closeHistory, record);
   state.payments = [];
+  state.comps = [];
   state.businessDay = { id: newId(), openedAt: null };
   ui.notice = `${record.business_date} 마감했습니다.`;
   commit();

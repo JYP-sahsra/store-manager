@@ -28,6 +28,9 @@ import {
   overtimeHours,
   drinkCounts,
   splitBill,
+  changeFreeCount,
+  freeItems,
+  summarizeComps,
 } from '../js/calc.js';
 
 const room = { id: 'room1', name: '1번 룸', hourlyRate: 30000 };
@@ -194,7 +197,7 @@ test('식음료 나간 수량(결제 여부와 무관, 많은 순)', () => {
   s = markSessionPaid(s);
   s = changeCount(s, 'beer', 1);
   const list = [...items, { id: 'soju', name: '소주', category: 'liquor', price: 6000 }];
-  assert.deepEqual(drinkCounts(changeCount(s, 'soju', 1), list), [{ name: '맥주', qty: 3 }, { name: '소주', qty: 1 }]);
+  assert.deepEqual(drinkCounts(changeCount(s, 'soju', 1), list), [{ name: '맥주', qty: 3, free: 0 }, { name: '소주', qty: 1, free: 0 }]);
 });
 
 test('더치페이: 1인 금액 100원 단위 올림, 차액 표시', () => {
@@ -202,6 +205,22 @@ test('더치페이: 1인 금액 100원 단위 올림, 차액 표시', () => {
   assert.deepEqual(splitBill(90000, 3), { people: 3, perPerson: 30000, collected: 90000, extra: 0 });
   assert.equal(splitBill(50000, 0).people, 1);
   assert.equal(splitBill(0, 4).perPerson, 0);
+});
+
+test('서비스(무료) 제공: 청구하지 않고 수량·정가 기준 금액만 기록', () => {
+  let s = changeCount(emptySession(), 'beer', 2);
+  s = changeFreeCount(changeFreeCount(s, 'beer', 1), 'fruit', 1);
+  assert.equal(changeFreeCount(emptySession(), 'beer', -1).freeQuantities, undefined); // 0 아래로 못 줄임
+  // 결제 대상에는 유료 2병만
+  assert.equal(sumLines(unpaidLines(s, room, items)), 16000);
+  assert.deepEqual(freeItems(s, items).map((i) => [i.name, i.qty, i.listPrice]), [['맥주', 1, 8000], ['과일안주', 1, 25000]]);
+  assert.deepEqual(drinkCounts(s, items), [{ name: '맥주', qty: 2, free: 1 }]);
+  // 마감 기록: 금액 합계는 그대로, by_item에 comp 항목
+  const comps = [{ items: freeItems(s, items) }, { items: [{ name: '맥주', qty: 2, listPrice: 8000 }] }];
+  assert.deepEqual(summarizeComps(comps).map((c) => [c.name, c.qty, c.value, c.sales]), [['맥주', 3, 24000, 0], ['과일안주', 1, 25000, 0]]);
+  const rec = buildCloseRecord({ id: 'c', openedAt: null, closedAt: new Date().toISOString(), cutoffHour: 12, payments: [], comps });
+  assert.equal(rec.net_total, 0);
+  assert.equal(rec.by_item.filter((i) => i.kind === 'comp').length, 2);
 });
 
 test('서비스 경과 시간(분)', () => {

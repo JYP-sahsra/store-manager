@@ -65,6 +65,8 @@ test('잘못된 수량과 가격은 정리하고, 빠진 필드는 채운다', (
   assert.equal(s.sessions.room1.paidHours, 0);
   assert.deepEqual(s.sessions.room1.services, []); // 예전 데이터에는 서비스 목록이 없다
   assert.deepEqual([s.sessions.room1.guests, s.sessions.room1.declined], [0, 0]);
+  assert.deepEqual(s.sessions.room1.freeQuantities, {});
+  assert.deepEqual(s.comps, []);
   assert.equal(s.sessions.room2, null);
   assert.deepEqual(s.payments, []);
 });

@@ -47,6 +47,7 @@ export function defaultState() {
     payments: [],
     pendingUploads: [],
     closeHistory: [],
+    comps: [], // 이번 영업일 서비스(무료) 제공 기록 [{id, roomId, roomName, sessionId, at, items[{itemId, name, qty, listPrice}]}]
   };
 }
 
@@ -101,6 +102,8 @@ function normalizeSession(raw) {
     quantities: normalizeCounts(raw.quantities),
     paidHours: nonNegInt(raw.paidHours, 0),
     paidQuantities: normalizeCounts(raw.paidQuantities),
+    // 서비스(무료)로 내준 식음료 수량. 청구하지 않고 룸을 비울 때 comps에 기록한다.
+    freeQuantities: normalizeCounts(raw.freeQuantities),
     // 방문 인원·이용안함(이탈) 인원. 예전 데이터는 0으로 채운다.
     guests: nonNegInt(raw.guests, 0),
     declined: nonNegInt(raw.declined, 0),
@@ -121,7 +124,7 @@ function normalizeSession(raw) {
 export function normalizeState(raw) {
   if (!isObject(raw)) throw new Error('데이터 형식이 올바르지 않습니다');
   if (raw.version !== STATE_VERSION) throw new Error(`지원하지 않는 데이터 버전입니다: ${raw.version}`);
-  for (const key of ['payments', 'pendingUploads', 'closeHistory']) {
+  for (const key of ['payments', 'pendingUploads', 'closeHistory', 'comps']) {
     if (raw[key] !== undefined && !Array.isArray(raw[key])) throw new Error(`${key} 형식이 올바르지 않습니다`);
   }
   const base = defaultState();
@@ -140,6 +143,7 @@ export function normalizeState(raw) {
     sessions,
     payments: raw.payments ?? [],
     pendingUploads: raw.pendingUploads ?? [],
+    comps: raw.comps ?? [],
     closeHistory: (raw.closeHistory ?? []).slice(0, CLOSE_HISTORY_LIMIT),
   };
 }
