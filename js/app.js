@@ -912,6 +912,17 @@ function setsFold(d, input) {
   </details>`;
 }
 
+// 새로 추가한 품목·세트 카드를 화면에 보여 주고 잠깐 강조한다.
+// 키보드는 입력칸을 직접 눌렀을 때만 올라오도록 자동 포커스는 하지 않는다(기존 목록이 가려지지 않게).
+function showNewCard(selector) {
+  const cards = app.querySelectorAll(selector);
+  const card = cards[cards.length - 1];
+  if (!card) return;
+  card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  card.classList.add('just-added');
+  setTimeout(() => card.classList.remove('just-added'), 1600);
+}
+
 function settingsView() {
   if (!ui.draft) ui.draft = startDraft();
   const d = ui.draft;
@@ -1200,8 +1211,7 @@ const actions = {
   'add-item': () => {
     ui.draft.items.push({ id: newId(), name: '', category: 'liquor', price: '', active: true });
     render();
-    const inputs = app.querySelectorAll('.item-edit input[data-path$=".name"]');
-    inputs[inputs.length - 1]?.focus();
+    showNewCard('.item-edit:not(.set-edit)');
   },
   'set-open': (el) => {
     ui.setPicker = { setId: el.dataset.set, counts: {} };
@@ -1227,8 +1237,7 @@ const actions = {
   'add-set': () => {
     ui.draft.items.push({ id: newId(), name: '', category: 'set', price: '', active: true, pickCount: '3', setItemIds: [] });
     render();
-    const inputs = app.querySelectorAll('.set-edit input[data-path$=".name"]');
-    inputs[inputs.length - 1]?.focus();
+    showNewCard('.set-edit');
   },
   'delete-item': (el) => {
     const item = ui.draft.items[Number(el.dataset.index)];

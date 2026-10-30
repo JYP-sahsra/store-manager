@@ -258,6 +258,10 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .set-targets > .muted { width: 100%; font-size: .85rem; }
 .ok-text { color: var(--ok); }
 
+.just-added { animation: just-added 1.6s ease-out; border-radius: 10px; }
+@keyframes just-added { 0%, 40% { background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent); } 100% { background: transparent; box-shadow: none; } }
+@media (prefers-reduced-motion: reduce) { .just-added { animation: none; outline: 2px solid var(--accent); } }
+
 .guest-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
 .guest-pick { min-height: 64px; font-size: 1.3rem; }
 .time-note { font-size: .8rem; margin: 0 0 4px; }
