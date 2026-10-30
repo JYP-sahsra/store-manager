@@ -1,5 +1,6 @@
 // 휴대폰(localStorage) 저장, 기본값, 데이터 검증, 백업 파일 처리.
 // 데이터 구조는 CLAUDE.md의 "데이터 계약"과 맞춰 유지한다.
+import { businessDate } from './calc.js';
 
 export const STORAGE_KEY = 'storeManager.v1';
 export const STATE_VERSION = 1;
@@ -200,19 +201,44 @@ export function saveState(state, storage) {
   storage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-// 시범 운영 데이터 초기화: 매출 관련 데이터(룸·결제·서비스 제공·마감 보관·미전송 마감/외상)만 비우고
+// 정식 운영 시작 영업일. 이 날짜 이전 영업일의 데이터가 시범 데이터다.
+export const OFFICIAL_START_DATE = '2026-11-01';
+
+// 시범 운영 데이터 초기화: 영업일이 정식 운영 시작일 이전인 매출 데이터만 지운다(언제 눌러도 실제 매출은 남는다).
 // 설정(품목·세트·룸 요금)·PIN·관리자 이름은 그대로 둔다.
 export function resetPilotData(state, now = new Date()) {
+  const isPilot = (date) => !date || date < OFFICIAL_START_DATE;
+  const openedAt = state.businessDay.openedAt;
+  // 지금 열려 있는 영업일이 시범 기간이면 룸·결제·서비스 제공을 비우고, 정식 운영일이면 그대로 둔다.
+  const currentIsPilot = openedAt ? isPilot(businessDate(openedAt, state.settings.dayCutoffHour)) : true;
   return {
     ...state,
-    businessDay: { id: newId(), openedAt: null },
-    sessions: Object.fromEntries(ROOM_IDS.map((id) => [id, null])),
-    payments: [],
-    comps: [],
-    pendingUploads: [],
-    pendingCredits: [],
-    closeHistory: [],
+    ...(currentIsPilot
+      ? {
+        businessDay: { id: newId(), openedAt: null },
+        sessions: Object.fromEntries(ROOM_IDS.map((id) => [id, null])),
+        payments: [],
+        comps: [],
+      }
+      : {}),
+    pendingUploads: state.pendingUploads.filter((r) => !isPilot(r.business_date)),
+    pendingCredits: state.pendingCredits.filter((c) => !isPilot(c.business_date)),
+    closeHistory: state.closeHistory.filter((r) => !isPilot(r.business_date)),
     pilotResetAt: now.toISOString(),
+  };
+}
+
+// 초기화하면 지워질 시범 데이터 건수(확인 창 안내용)
+export function pilotDataCounts(state) {
+  const isPilot = (date) => !date || date < OFFICIAL_START_DATE;
+  const openedAt = state.businessDay.openedAt;
+  const currentIsPilot = openedAt ? isPilot(businessDate(openedAt, state.settings.dayCutoffHour)) : true;
+  return {
+    payments: currentIsPilot ? state.payments.length : 0,
+    rooms: currentIsPilot ? Object.values(state.sessions).filter(Boolean).length : 0,
+    pendingUploads: state.pendingUploads.filter((r) => isPilot(r.business_date)).length,
+    pendingCredits: state.pendingCredits.filter((c) => isPilot(c.business_date)).length,
+    closeHistory: state.closeHistory.filter((r) => isPilot(r.business_date)).length,
   };
 }
 

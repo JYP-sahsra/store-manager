@@ -51,6 +51,8 @@ import {
   mergeServerSettings,
   addCloseHistory,
   resetPilotData,
+  pilotDataCounts,
+  OFFICIAL_START_DATE,
   SETTINGS_VERSION,
 } from './storage.js';
 import * as api from './api.js';
@@ -981,8 +983,8 @@ function settingsView() {
     </section>
     <section class="card danger-card">
       <h3>시범 데이터 초기화</h3>
-      <p class="muted">정식 운영을 시작하기 전에 이 휴대폰의 매출 데이터(진행 중인 룸·결제 내역·서비스 제공·보관 중인 마감/외상)를 지웁니다.
-        품목·세트·룸 요금·매장 정보·PIN은 그대로 남습니다. 서버 데이터는 README의 "정식 운영 전환" SQL로 따로 정리합니다.</p>
+      <p class="muted">이 휴대폰에서 영업일 ${OFFICIAL_START_DATE} 이전(시범 운영)의 매출 데이터(룸·결제 내역·서비스 제공·보관 중인 마감/외상)만 지웁니다.
+        정식 운영 데이터와 품목·세트·룸 요금·매장 정보·PIN은 그대로 남으니 11/1 이후에 눌러도 안전합니다. 서버 데이터는 README의 "정식 운영 전환" SQL로 따로 정리합니다.</p>
       ${state.pilotResetAt ? `<p class="ok-text">이 휴대폰은 ${fmtDateTime(state.pilotResetAt)}에 초기화했습니다.</p>` : ''}
       <button class="btn block danger" data-action="reset-pilot">시범 데이터 초기화</button>
     </section>
@@ -1262,12 +1264,12 @@ const actions = {
     render();
   },
   'reset-pilot': () => {
-    const active = activeRooms().length;
+    const c = pilotDataCounts(state);
     const msg = [
-      '이 휴대폰의 시범 매출 데이터를 모두 지웁니다.',
-      `· 결제 내역 ${state.payments.length}건, 진행 중인 룸 ${active}개`,
-      `· 서버에 못 보낸 마감 ${state.pendingUploads.length}건 · 외상 ${state.pendingCredits.length}건`,
-      '품목·세트·룸 요금·매장 정보·PIN은 그대로 남습니다.',
+      `이 휴대폰에서 영업일 ${OFFICIAL_START_DATE} 이전(시범 운영) 데이터만 지웁니다.`,
+      `· 결제 내역 ${c.payments}건, 진행 중인 룸 ${c.rooms}개`,
+      `· 보관 중인 마감 ${c.closeHistory}건 · 서버에 못 보낸 마감 ${c.pendingUploads}건 · 외상 ${c.pendingCredits}건`,
+      '정식 운영(11/1 이후) 데이터와 품목·세트·룸 요금·매장 정보·PIN은 그대로 남습니다.',
       '되돌릴 수 없습니다. 계속할까요?',
     ].join('\n');
     if (!confirm(msg)) return;
@@ -1276,7 +1278,7 @@ const actions = {
     ui.payment = null;
     ui.calendar.data = null;
     ui.credit = { ...ui.credit, accounts: null, detail: null };
-    ui.notice = '시범 데이터를 초기화했습니다. 이제부터 기록되는 매출이 실제 매출입니다.';
+    ui.notice = `영업일 ${OFFICIAL_START_DATE} 이전 시범 데이터를 지웠습니다. 정식 운영 데이터는 그대로입니다.`;
     commit();
   },
   'reset-draft': () => {

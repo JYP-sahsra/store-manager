@@ -14,6 +14,7 @@ import {
   addCloseHistory,
   newId,
   resetPilotData,
+  pilotDataCounts,
 } from '../js/storage.js';
 
 function memoryStorage(initial = {}) {
@@ -172,6 +173,22 @@ test('시범 데이터 초기화: 매출 데이터만 비우고 설정·PIN·관
   assert.deepEqual(Object.values(r.sessions), [null, null, null]);
   assert.notEqual(r.businessDay.id, oldDay);
   assert.equal(r.pilotResetAt, '2026-11-01T03:00:00.000Z');
+});
+
+test('시범 데이터 초기화는 영업일 11/1 이전 데이터만 지운다(정식 운영 후 눌러도 실제 매출 유지)', () => {
+  const state = defaultState();
+  state.businessDay = { id: 'real-day', openedAt: new Date(2026, 10, 2, 20, 0).toISOString() }; // 11/2 영업 중
+  state.sessions.room1 = { id: 's', startedAt: 'x', hours: 1, quantities: {}, paidHours: 0, paidQuantities: {} };
+  state.payments = [{ id: 'real-pay' }];
+  state.closeHistory = [{ id: 'a', business_date: '2026-10-31' }, { id: 'b', business_date: '2026-11-01' }];
+  state.pendingUploads = [{ id: 'u1', business_date: '2026-10-30' }, { id: 'u2', business_date: '2026-11-01' }];
+  state.pendingCredits = [{ id: 'k1', business_date: '2026-10-31' }, { id: 'k2', business_date: '2026-11-02' }];
+  assert.deepEqual(pilotDataCounts(state), { payments: 0, rooms: 0, pendingUploads: 1, pendingCredits: 1, closeHistory: 1 });
+  const r = resetPilotData(state);
+  assert.equal(r.businessDay.id, 'real-day');
+  assert.ok(r.sessions.room1);
+  assert.deepEqual(r.payments, [{ id: 'real-pay' }]);
+  assert.deepEqual([r.closeHistory, r.pendingUploads, r.pendingCredits].map((l) => l.map((x) => x.id)), [['b'], ['u2'], ['k2']]);
 });
 
 test('newId는 UUID 형식', () => {
