@@ -30,7 +30,7 @@ function makeLine(kind, itemId, name, unitPrice, qty) {
 // 자동으로 포함한다(overtimeHours). 결제하면 markSessionPaid가 서비스 시간을 그만큼 늘려 확정한다.
 export function unpaidLines(session, room, items, now = new Date()) {
   const lines = [];
-  const hours = session.hours - session.paidHours;
+  const hours = roomHoursTotal(session, now) - session.paidHours;
   if (hours > 0) {
     lines.push(makeLine('room', null, `${room.name} 이용(시간)`, room.hourlyRate, hours));
   }
@@ -62,6 +62,21 @@ export function unpaidLines(session, room, items, now = new Date()) {
     }
   }
   return lines;
+}
+
+// ── 룸 이용 시간 ──
+// 룸 시간 = 서비스 연동 시간 + 추가 이용 시간(session.hours, 관리자가 −/+).
+// 서비스 연동 시간 = 첫 서비스 시작 ~ 마지막 서비스 종료(초과분 포함)를 1시간 단위로 올림. 서비스가 없으면 0.
+export function serviceSpanHours(session, now = new Date()) {
+  const live = (session.services || []).filter((s) => s.hours > 0);
+  if (!live.length) return 0;
+  const start = Math.min(...live.map((s) => new Date(s.startedAt).getTime()));
+  const end = Math.max(...live.map((s) => new Date(s.startedAt).getTime() + (s.hours + overtimeHours(s, now)) * HOUR_MS));
+  return Math.ceil((end - start) / HOUR_MS);
+}
+
+export function roomHoursTotal(session, now = new Date()) {
+  return serviceSpanHours(session, now) + session.hours;
 }
 
 // 종료 시각을 넘긴 서비스의 초과 시간(1시간 단위 올림). 초과가 아니면 0.
@@ -253,9 +268,8 @@ export function splitBill(amount, people) {
 // 결제가 끝나면 현재 수량까지를 결제 완료로 표시한다.
 // 초과된 서비스는 결제한 초과분만큼 서비스 시간을 늘려 확정한다(unpaidLines와 같은 now를 넘긴다).
 export function markSessionPaid(session, now = new Date()) {
-  return {
+  const paid = {
     ...session,
-    paidHours: session.hours,
     paidQuantities: { ...session.quantities },
     services: (session.services || []).map((s) => {
       const hours = s.hours + overtimeHours(s, now);
@@ -263,6 +277,8 @@ export function markSessionPaid(session, now = new Date()) {
     }),
     setOrders: (session.setOrders || []).map((o) => ({ ...o, paid: true })),
   };
+  // 룸은 서비스 연동 시간까지 포함한 전체 시간을 결제 완료로 표시한다(서비스를 늘리면 룸 미결제도 다시 생긴다).
+  return { ...paid, paidHours: roomHoursTotal(paid, now) };
 }
 
 // ── 세트 상품 ──
@@ -333,13 +349,15 @@ export function summarizeComps(comps) {
 }
 
 // 결제한 수량 아래로는 줄일 수 없다(환불은 범위 밖).
-export function changeCount(session, key, delta) {
-  const isHours = key === HOURS_KEY;
-  const current = isHours ? session.hours : session.quantities[key] || 0;
-  const paid = isHours ? session.paidHours : session.paidQuantities[key] || 0;
-  const next = current + delta;
-  if (next < paid || next < 0) return session;
-  if (isHours) return { ...session, hours: next };
+// 룸 추가 이용 시간은 서비스 연동 시간과 합친 전체가 결제한 시간보다 작아지지 않게 한다.
+export function changeCount(session, key, delta, now = new Date()) {
+  if (key === HOURS_KEY) {
+    const next = session.hours + delta;
+    if (next < 0 || serviceSpanHours(session, now) + next < session.paidHours) return session;
+    return { ...session, hours: next };
+  }
+  const next = (session.quantities[key] || 0) + delta;
+  if (next < (session.paidQuantities[key] || 0) || next < 0) return session;
   return { ...session, quantities: { ...session.quantities, [key]: next } };
 }
 

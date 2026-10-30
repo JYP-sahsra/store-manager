@@ -32,6 +32,8 @@ import {
   addSetOrder,
   removeSetOrder,
   setOrderCounts,
+  serviceSpanHours,
+  roomHoursTotal,
   changeFreeCount,
   freeItems,
   CATEGORY_LABELS,
@@ -69,6 +71,7 @@ const ui = {
   // 접고 펴는 영역의 펼침 상태(다시 그려도 유지). 기본 정보는 PIN이 없을 때만 처음부터 펼친다.
   folds: { basic: !state.pin, rooms: false, items: false, sets: false, calc: false },
   setPicker: null, // 세트 음료 고르기 창: { setId, counts: { itemId: n } }
+  entryPicker: null, // 손님 입장 인원 선택 창: { roomId }
   salesView: 'close', // 매출 탭 항목: close(일 마감) / month(월 매출) / credit(외상 관리)
   // 간이 계산기(매출에 기록하지 않음): 품목별 수량, 결제수단, 더치페이 인원
   calc: { counts: {}, method: 'cash', people: 1 },
@@ -186,7 +189,28 @@ function render() {
       ${TABS.map((t) => `<button data-action="tab" data-tab="${t.id}" ${ui.tab === t.id ? 'aria-current="page"' : ''}>${t.label}</button>`).join('')}
     </nav>
     ${ui.payment ? paymentSheet() : ''}
-    ${ui.setPicker ? setPickerSheet() : ''}`;
+    ${ui.setPicker ? setPickerSheet() : ''}
+    ${ui.entryPicker ? entryPickerSheet() : ''}`;
+}
+
+// 손님 입장 시 방문 인원 선택(7명 이상이면 입장 후 룸 화면에서 늘린다)
+function entryPickerSheet() {
+  const room = roomById(ui.entryPicker.roomId);
+  return `<div class="sheet-backdrop">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="entry-title">
+      <div class="sheet-grip" aria-hidden="true"></div>
+      <h2 id="entry-title">${esc(room.name)} 손님 입장</h2>
+      <p class="muted">방문 인원을 골라 주세요. 입장 시각은 지금으로 기록됩니다.</p>
+      <div class="guest-grid">
+        ${[1, 2, 3, 4, 5, 6].map((n) => `<button class="btn guest-pick" data-action="enter-guests" data-n="${n}">${n}명</button>`).join('')}
+      </div>
+      <p class="muted">7명 이상이면 6명을 고른 뒤 룸 화면에서 늘려 주세요.</p>
+      <div class="actions">
+        <button class="btn" data-action="entry-cancel">취소</button>
+        <button class="btn" data-action="enter-guests" data-n="0">인원은 나중에</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 function roomsView() {
@@ -307,17 +331,6 @@ function serviceTimeChip(svc, no, now) {
   return `<div class="svc-time-chip ${st}"><span class="no">${no}번</span><b>${main}</b><small>${sub}</small></div>`;
 }
 
-function counterRow({ label, sub, key, qty, paid }) {
-  return `<div class="counter-row">
-    <div class="counter-label"><span>${esc(label)}</span><small>${esc(sub)}${paid ? ` · 결제 ${paid}` : ''}</small></div>
-    <div class="counter">
-      <button class="step" data-action="dec" data-key="${esc(key)}" ${qty <= paid ? 'disabled' : ''} aria-label="${esc(label)} 줄이기">−</button>
-      <span class="qty" aria-label="${esc(label)} 수량">${qty}</span>
-      <button class="step" data-action="inc" data-key="${esc(key)}" aria-label="${esc(label)} 늘리기">+</button>
-    </div>
-  </div>`;
-}
-
 // 셀프 주문형 메뉴 카드. 담긴 수량이 있으면 강조하고, 결제한 수량 아래로는 줄일 수 없다.
 // 세트 카드: + 는 음료 고르기 창을 열고, − 는 결제하지 않은 마지막 세트를 뺀다.
 function setCard(set, s) {
@@ -419,6 +432,24 @@ function serviceCard(svc, no, now) {
   </div>`;
 }
 
+// 룸 이용 시간 = 서비스 연동(첫 서비스 시작~마지막 종료, 올림) + 추가 이용(서비스 없이 또는 서비스 끝난 뒤 룸만)
+function roomTimeCard(room, s, now) {
+  const span = serviceSpanHours(s, now);
+  const total = span + s.hours;
+  return `<section class="card time-card">
+    <div class="counter-row">
+      <div class="counter-label"><span>룸 이용 ${total}시간 · ${won(room.hourlyRate * total)}</span>
+        <small>서비스 연동 ${span}시간 + 추가 이용 ${s.hours}시간 · 시간당 ${won(room.hourlyRate)}${s.paidHours ? ` · 결제 ${s.paidHours}시간` : ''}</small></div>
+      <div class="counter">
+        <button class="step" data-action="dec" data-key="${HOURS_KEY}" ${s.hours === 0 || total - 1 < s.paidHours ? 'disabled' : ''} aria-label="룸 추가 이용 1시간 줄이기">−</button>
+        <span class="qty" aria-label="룸 추가 이용 시간">${s.hours}</span>
+        <button class="step" data-action="inc" data-key="${HOURS_KEY}" aria-label="룸 추가 이용 1시간 늘리기">+</button>
+      </div>
+    </div>
+    <p class="muted time-note">룸 시간은 기타 서비스 시간에 맞춰 자동으로 계산됩니다. 서비스 없이 룸만 쓰거나 서비스가 끝난 뒤 더 쓰면 추가 이용을 늘려 주세요.</p>
+  </section>`;
+}
+
 // 방문 인원 관리(대기 = 방문 − 서비스 적용, 금액에는 영향 없음)와 룸 이용안함(손님 이탈 → 룸 비우기)
 function guestCard(s) {
   const g = guestSummary(s);
@@ -480,9 +511,6 @@ function roomDetailView(roomId) {
       <div class="row-between"><h2>${esc(room.name)}</h2>
         <span class="entry-time">입장 <b>${fmtTime12(s.startedAt)}</b></span></div>
     </div>
-    <section class="card time-card">
-      ${counterRow({ label: '룸 이용 시간', sub: `시간당 ${won(room.hourlyRate)}`, key: HOURS_KEY, qty: s.hours, paid: s.paidHours })}
-    </section>
     ${guestCard(s)}
     ${cats.length ? `
       <div class="chips" role="tablist" aria-label="메뉴 분류">
@@ -492,6 +520,7 @@ function roomDetailView(roomId) {
         ? serviceSection(s)
         : `<div class="menu-grid">${sets.map((x) => setCard(x, s)).join('')}${items.filter((i) => i.category === 'liquor').map((i) => menuCard(i, s)).join('')}</div>`}`
     : '<p class="empty">판매 중인 품목이 없습니다. 관리 탭에서 추가해 주세요.</p>'}
+    ${roomTimeCard(room, s, now)}
     <div class="order-bar">
       <div class="order-sum">
         <span>${balance ? `미결제 ${unpaid.length}건` : '미결제 없음'} · 결제 ${won(sessionPaid(s))}</span>
@@ -960,18 +989,32 @@ const actions = {
     window.scrollTo(0, 0);
     loadSalesViewData();
   },
+  // 손님 입장: 먼저 방문 인원을 고르는 창을 띄운다.
   'start-room': (el) => {
     const stale = staleBusinessDate();
     if (stale && !confirm(`${stale} 영업이 아직 마감되지 않았습니다.\n지금 시작하면 이 손님 매출도 ${stale} 매출로 기록됩니다.\n\n그래도 시작할까요? (취소 후 매출 탭에서 먼저 마감할 수 있습니다)`)) {
       return;
     }
-    const now = new Date().toISOString();
-    const id = el.dataset.room;
-    state.sessions[id] = { id: newId(), startedAt: now, hours: 0, quantities: {}, paidHours: 0, paidQuantities: {}, freeQuantities: {}, guests: 0, declined: 0, services: [] };
-    if (!state.businessDay.openedAt) state.businessDay.openedAt = now;
-    ui.roomId = id;
+    ui.entryPicker = { roomId: el.dataset.room };
     navPush();
+    render();
+  },
+  'enter-guests': (el) => {
+    const id = ui.entryPicker.roomId;
+    const now = new Date().toISOString();
+    state.sessions[id] = {
+      id: newId(), startedAt: now, hours: 0, quantities: {}, paidHours: 0, paidQuantities: {}, freeQuantities: {},
+      setOrders: [], guests: Number(el.dataset.n), declined: 0, services: [],
+    };
+    if (!state.businessDay.openedAt) state.businessDay.openedAt = now;
+    ui.entryPicker = null;
+    ui.roomId = id;
+    window.scrollTo(0, 0);
     commit();
+  },
+  'entry-cancel': () => {
+    ui.entryPicker = null;
+    render();
   },
   'open-room': (el) => {
     ui.roomId = el.dataset.room;
@@ -1307,7 +1350,7 @@ function confirmPayment() {
       business_date: currentBusinessDate(),
       room_name: room.name,
       entered_at: s.startedAt,
-      room_hours: paidSession.hours,
+      room_hours: roomHoursTotal(paidSession, now),
       service_hours: paidSession.services.reduce((a, v) => a + v.hours, 0),
       created_by: state.managerName || null,
     });
@@ -1651,7 +1694,8 @@ function navPush() {
 }
 
 function goBackInApp() {
-  if (ui.setPicker) ui.setPicker = null;
+  if (ui.entryPicker) ui.entryPicker = null;
+  else if (ui.setPicker) ui.setPicker = null;
   else if (ui.payment) ui.payment = null;
   else if (ui.tab === 'sales' && ui.credit.detail) ui.credit.detail = null;
   else if (ui.tab === 'rooms' && ui.roomId) ui.roomId = null;
@@ -1699,7 +1743,8 @@ app.addEventListener(
 );
 
 // 경과 시간 표시를 갱신한다. 입력 중이거나 결제 화면이 열려 있으면 건너뛴다.
-const isEditing = () => Boolean(ui.payment || ui.setPicker || document.activeElement?.matches('input, select'));
+const isEditing = () =>
+  Boolean(ui.payment || ui.setPicker || ui.entryPicker || document.activeElement?.matches('input, select'));
 setInterval(() => {
   if (ui.tab === 'rooms' && !isEditing()) render();
 }, 30000);

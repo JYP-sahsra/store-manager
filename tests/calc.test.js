@@ -38,6 +38,8 @@ import {
   addSetOrder,
   removeSetOrder,
   setOrderCounts,
+  serviceSpanHours,
+  roomHoursTotal,
 } from '../js/calc.js';
 
 const room = { id: 'room1', name: '1번 룸', hourlyRate: 30000 };
@@ -111,7 +113,8 @@ test('시간제 서비스: 1인 1건, 단가 × 시간, 서로 다른 시작 시
   assert.equal(changeServiceHours(s, 'b', -1), s); // 결제한 시간 아래로 못 줄임
   assert.equal(removeService(s, 'b'), s); // 결제 기록이 있으면 못 지움
   s = changeServiceHours(s, 'b', 1);
-  assert.deepEqual(unpaidLines(s, room, all, T).map((l) => [l.serviceId, l.qty]), [['b', 1]]);
+  // 서비스 연장분 + 룸 연동 시간도 1시간 늘어난다(21:00~23:30 → 3시간)
+  assert.deepEqual(unpaidLines(s, room, all, T).map((l) => [l.kind, l.serviceId, l.qty]), [['room', undefined, 1], ['service', 'b', 1]]);
 });
 
 test('시간제 서비스 종료 예정 시각과 상태(10분 전 강조, 지나면 초과)', () => {
@@ -186,7 +189,7 @@ test('초과분은 미결제에 자동 포함되고, 결제하면 서비스 시�
   const now = new Date(2026, 9, 26, 22, 10);
   let s = addService(emptySession(), 'svc', new Date(2026, 9, 26, 21, 0).toISOString(), 'a');
   // 결제 안 한 1시간 + 10분 초과 → 2시간분 80,000원(초과 1시간 포함)
-  const lines = unpaidLines(s, room, svcItems, now);
+  const lines = unpaidLines(s, room, svcItems, now).filter((l) => l.kind === 'service');
   assert.deepEqual(lines.map((l) => [l.qty, l.subtotal, l.overtimeHours]), [[2, 80000, 1]]);
   s = markSessionPaid(s, now);
   assert.deepEqual([s.services[0].hours, s.services[0].paidHours], [2, 2]);
@@ -196,7 +199,8 @@ test('초과분은 미결제에 자동 포함되고, 결제하면 서비스 시�
   // 결제한 1시간이 70분 초과 → 초과 2시간만 미결제
   let p = markSessionPaid(addService(emptySession(), 'svc', new Date(2026, 9, 26, 20, 0).toISOString(), 'b'), new Date(2026, 9, 26, 20, 30));
   assert.equal(overtimeHours(p.services[0], now), 2);
-  assert.equal(sumLines(unpaidLines(p, room, svcItems, now)), 80000);
+  // 서비스 초과 2시간 80,000원 + 룸 연동 시간도 2시간 늘어 60,000원
+  assert.deepEqual(unpaidLines(p, room, svcItems, now).map((l) => [l.kind, l.qty, l.subtotal]), [['room', 2, 60000], ['service', 2, 80000]]);
 });
 
 test('식음료 나간 수량(결제 여부와 무관, 많은 순)', () => {
@@ -294,6 +298,41 @@ test('세트: 세트 가격만 청구, 구성 음료는 나간 수량과 마감 
   assert.deepEqual(sum.byItem.map((i) => [i.kind, i.name, i.qty, i.sales]), [
     ['liquor', '음료 3종 세트', 1, 10000], ['set_part', '콜라', 2, 0], ['set_part', '사이다', 1, 0],
   ]);
+});
+
+test('룸 시간: 첫 서비스 시작~마지막 종료(올림) + 추가 이용', () => {
+  const at = (h, m = 0) => new Date(2026, 9, 26, h, m).toISOString();
+  const T = new Date(2026, 9, 26, 21, 40); // 아직 아무도 초과 전
+  const svcItems = [{ id: 'svc', name: '도우미', category: 'service', price: 40000 }];
+  let s = addService(emptySession(), 'svc', at(21), 'a');
+  s = changeServiceHours(s, 'a', 1); // 21:00~23:00
+  s = addService(s, 'svc', at(21, 30), 'b'); // 21:30~22:30
+  assert.equal(serviceSpanHours(s, T), 2);
+  s = changeServiceHours(s, 'b', 1); // 21:30~23:30 → 21:00~23:30 → 2.5h → 3시간
+  assert.equal(serviceSpanHours(s, T), 3);
+  // 서비스 없이 룸만: 추가 이용 시간만
+  assert.equal(roomHoursTotal(changeCount(emptySession(), HOURS_KEY, 2), T), 2);
+  // 서비스 후 추가 이용 1시간
+  s = changeCount(s, HOURS_KEY, 1, T);
+  assert.equal(roomHoursTotal(s, T), 4);
+  const roomLine = unpaidLines(s, { name: '1번 룸', hourlyRate: 30000 }, svcItems, T).find((l) => l.kind === 'room');
+  assert.deepEqual([roomLine.qty, roomLine.subtotal], [4, 120000]);
+});
+
+test('룸 시간 결제 후: 서비스를 늘리면 룸 미결제도 다시 생기고, 추가 이용은 결제분 아래로 못 줄인다', () => {
+  const at = (h, m = 0) => new Date(2026, 9, 26, h, m).toISOString();
+  const T = new Date(2026, 9, 26, 21, 20);
+  const r = { name: '1번 룸', hourlyRate: 30000 };
+  const svcItems = [{ id: 'svc', name: '도우미', category: 'service', price: 40000 }];
+  let s = changeCount(addService(emptySession(), 'svc', at(21), 'a'), HOURS_KEY, 1, T); // 연동 1 + 추가 1
+  s = markSessionPaid(s, T);
+  assert.equal(s.paidHours, 2);
+  assert.equal(changeCount(s, HOURS_KEY, -1, T), s); // 결제한 2시간 아래로 못 줄임
+  s = changeServiceHours(s, 'a', 1); // 서비스 2시간 → 연동 2 + 추가 1 = 3
+  assert.deepEqual(unpaidLines(s, r, svcItems, T).map((l) => [l.kind, l.qty]), [['room', 1], ['service', 1]]);
+  // 서비스가 초과되면 룸 연동 시간도 초과분만큼 늘어난다
+  const late = new Date(2026, 9, 26, 23, 10);
+  assert.equal(serviceSpanHours(s, late), 3);
 });
 
 test('서비스 경과 시간(분)', () => {

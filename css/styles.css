@@ -258,6 +258,10 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .set-targets > .muted { width: 100%; font-size: .85rem; }
 .ok-text { color: var(--ok); }
 
+.guest-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
+.guest-pick { min-height: 64px; font-size: 1.3rem; }
+.time-note { font-size: .8rem; margin: 0 0 4px; }
+
 .calc { margin-top: 16px; }
 .calc h4 { margin: 12px 0 2px; }
 .calc-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
