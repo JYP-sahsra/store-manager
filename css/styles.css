@@ -264,6 +264,19 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .time-card { padding-top: 6px; padding-bottom: 6px; }
 .time-card .counter-row { border-top: 0; }
 
+/* 매출 탭 위쪽 항목 탭 */
+.sub-tabs {
+  position: sticky; top: calc(57px + env(safe-area-inset-top)); z-index: 4;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+  margin: -4px 0 12px; padding: 4px; border-radius: 14px; background: var(--line);
+}
+.sub-tabs button {
+  min-height: 44px; border: 0; border-radius: 11px; background: transparent; color: var(--muted);
+  font-weight: 800; cursor: pointer;
+}
+.sub-tabs button[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 4px rgb(0 0 0 / .12); }
+.warn-dot { background: var(--danger); vertical-align: middle; }
+
 .chips { display: flex; gap: 8px; overflow-x: auto; margin: 4px 0 12px; scrollbar-width: none; }
 .chip {
   flex-shrink: 0; min-height: 40px; padding: 0 16px; border-radius: 999px;

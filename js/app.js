@@ -64,7 +64,8 @@ const ui = {
   // 매출 캘린더: data = { source: 'server' | 'local', list }, selected = 펼친 날짜
   calendar: { month: monthOf(new Date()), data: null, loading: false, selected: null },
   // 접고 펴는 영역의 펼침 상태(다시 그려도 유지). 기본 정보는 PIN이 없을 때만 처음부터 펼친다.
-  folds: { basic: !state.pin, rooms: false, items: false, calc: false, credit: false },
+  folds: { basic: !state.pin, rooms: false, items: false, calc: false },
+  salesView: 'close', // 매출 탭 항목: close(일 마감) / month(월 매출) / credit(외상 관리)
   // 간이 계산기(매출에 기록하지 않음): 품목별 수량, 결제수단, 더치페이 인원
   calc: { counts: {}, method: 'cash', people: 1 },
   // 외상 장부: accounts = 서버 명단(null이면 아직 안 불러옴), detail = 선택한 사람의 하위 내역
@@ -603,8 +604,24 @@ function closeBreakdown(r) {
       <p class="muted">합계 ${comps.reduce((a, x) => a + x.qty, 0)}개 · 정가 기준 ${won(comps.reduce((a, x) => a + x.value, 0))}</p>` : ''}`;
 }
 
-// 매출 탭: 이번 영업일 요약 → 일 마감 → 월 매출 캘린더 → 오늘 결제 내역
+// 매출 탭: 위쪽 항목 탭으로 일 마감 / 월 매출 / 외상 관리를 나눠 본다.
+const SALES_VIEWS = [
+  { id: 'close', label: '일 마감' },
+  { id: 'month', label: '월 매출' },
+  { id: 'credit', label: '외상 관리' },
+];
+
 function salesView() {
+  const view = { close: dayCloseView, month: calendarSection, credit: creditSection }[ui.salesView];
+  return `<div class="sub-tabs" role="tablist" aria-label="매출 항목">
+      ${SALES_VIEWS.map((v) => `<button role="tab" aria-selected="${ui.salesView === v.id}" data-action="sales-view" data-view="${v.id}">
+        ${v.label}${v.id === 'credit' && state.pendingCredits.length ? ' <i class="dot warn-dot" aria-label="미전송 있음"></i>' : ''}</button>`).join('')}
+    </div>
+    ${view()}`;
+}
+
+// 일 마감: 이번 영업일 요약 → [일 마감] → 오늘 결제 내역
+function dayCloseView() {
   const preview = buildCloseRecord({
     id: state.businessDay.id,
     openedAt: state.businessDay.openedAt,
@@ -629,8 +646,6 @@ function salesView() {
       <p>서버에 올리지 못한 마감 ${pending.length}건이 휴대폰에 있습니다: ${pending.map((p) => esc(p.business_date)).join(', ')}</p>
       <button class="btn block" data-action="retry-upload" ${ui.busy ? 'disabled' : ''}>다시 업로드</button>
     </section>` : ''}
-    ${calendarSection()}
-    ${creditSection()}
     ${historySection()}`;
 }
 
@@ -647,13 +662,14 @@ function creditSection() {
         <input data-input="credit-search" autocomplete="off" value="${esc(c.query)}"></label>
       <div id="credit-list">${creditListRows()}</div>`;
   }
-  return `<details class="card fold" data-fold="credit" ${ui.folds.credit ? 'open' : ''}>
-    <summary><h3>외상 장부</h3><span class="muted">${c.accounts ? `미상환 ${open.length}명 · 잔액 ${won(open.reduce((a, x) => a + x.balance, 0))}` : '펼치면 서버에서 명단을 불러옵니다'}</span></summary>
+  return `<section class="card">
+    <div class="row-between"><h3>외상 장부</h3>
+      ${c.detail ? '' : `<button class="btn small" data-action="credit-reload" ${c.loading ? 'disabled' : ''}>새로고침</button>`}</div>
+    ${c.accounts ? `<p class="muted">미상환 ${open.length}명 · 잔액 ${won(open.reduce((a, x) => a + x.balance, 0))}</p>` : ''}
     ${pending ? `<div class="warn">서버에 아직 못 보낸 외상 기록 ${pending}건이 이 폰에 있습니다.
       <button class="btn small" data-action="credit-retry" ${ui.busy ? 'disabled' : ''}>다시 보내기</button></div>` : ''}
     ${body}
-    ${c.detail ? '' : `<button class="btn small" data-action="credit-reload" ${c.loading ? 'disabled' : ''}>새로고침</button>`}
-  </details>`;
+  </section>`;
 }
 
 function creditListRows() {
@@ -854,7 +870,14 @@ const actions = {
     if (ui.tab !== el.dataset.tab && el.dataset.tab !== 'rooms') navPush();
     ui.tab = el.dataset.tab;
     render();
-    if (ui.tab === 'sales' && !ui.calendar.data && !ui.calendar.loading) loadMonth(ui.calendar.month);
+    if (ui.tab === 'sales') loadSalesViewData();
+  },
+  'sales-view': (el) => {
+    ui.salesView = el.dataset.view;
+    if (ui.salesView !== 'credit') ui.credit.detail = null;
+    render();
+    window.scrollTo(0, 0);
+    loadSalesViewData();
   },
   'start-room': (el) => {
     const stale = staleBusinessDate();
@@ -1078,6 +1101,12 @@ const actions = {
     downloadFile(`store-backup-${currentBusinessDate()}.json`, exportBackup(state));
   },
 };
+
+// 매출 탭의 항목을 처음 열 때 필요한 서버 데이터를 받는다.
+function loadSalesViewData() {
+  if (ui.salesView === 'month' && !ui.calendar.data && !ui.calendar.loading) loadMonth(ui.calendar.month);
+  if (ui.salesView === 'credit' && !ui.credit.accounts && !ui.credit.loading) loadCreditAccounts();
+}
 
 function newPaymentUi(roomId, endAfter) {
   return { roomId, method: 'cash', discountText: '', endAfter, creditOpen: false, creditText: '', creditPhone: '', creditName: '' };
@@ -1542,7 +1571,6 @@ app.addEventListener(
       if (e.target.open && !ui.credit.accounts) loadCreditAccounts();
     } else if (key && key in ui.folds) {
       ui.folds[key] = e.target.open;
-      if (key === 'credit' && e.target.open && !ui.credit.accounts) loadCreditAccounts();
     }
   },
   true,
@@ -1599,8 +1627,11 @@ async function syncAll() {
   await uploadCredits();
   ui.credit.accounts = null;
   ui.credit.detail = null;
-  if (ui.tab === 'sales') await loadMonth(ui.calendar.month);
-  else ui.calendar.data = null;
+  ui.calendar.data = null;
+  if (ui.tab === 'sales') {
+    if (ui.salesView === 'month') await loadMonth(ui.calendar.month);
+    if (ui.salesView === 'credit') await loadCreditAccounts();
+  }
   if (ui.notice === '동기화 중…') {
     notify(`동기화했습니다. 최신 앱(${ui.appVersion || '버전 확인 불가'})과 서버 데이터를 사용 중입니다.`);
   }
