@@ -109,6 +109,24 @@ test('영업일 기준 시각: 기본 12시, v1 설정의 0시는 12시로 옮�
   assert.equal(normalizeSettings({ dayCutoffHour: 0 }).settingsVersion, 2);
 });
 
+test('세트 설정 정규화·검증: 대상은 존재하는 식음료만, 개수·대상 필수', () => {
+  const s = normalizeSettings({
+    items: [
+      { id: 'cola', name: '콜라', category: 'liquor', price: 4000 },
+      { id: 'svc', name: '도우미', category: 'service', price: 40000 },
+      { id: 'set', name: '세트', category: 'set', price: 10000, pickCount: 3, setItemIds: ['cola', 'svc', 'gone'] },
+    ],
+  });
+  const set = s.items.find((i) => i.id === 'set');
+  assert.deepEqual([set.pickCount, set.setItemIds], [3, ['cola']]);
+  assert.equal(validateSettings(s).length, 0);
+  set.setItemIds = [];
+  set.pickCount = 0;
+  assert.equal(validateSettings(s).length, 2);
+  // 예전 세션에는 setOrders가 없다
+  assert.deepEqual(normalizeState({ version: 1, sessions: { room1: { id: 's', startedAt: 'x' } } }).sessions.room1.setOrders, []);
+});
+
 test('설정 검증: 이름, 가격, 기준 시각', () => {
   const s = defaultState().settings;
   assert.deepEqual(validateSettings(s), []);

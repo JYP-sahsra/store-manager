@@ -4,7 +4,8 @@
 export const STORAGE_KEY = 'storeManager.v1';
 export const STATE_VERSION = 1;
 export const ROOM_IDS = ['room1', 'room2', 'room3'];
-export const ITEM_CATEGORIES = ['liquor', 'service'];
+export const ITEM_CATEGORIES = ['liquor', 'service', 'set'];
+export const DEFAULT_SET_PICK_COUNT = 3;
 const BACKUP_APP = 'store-manager';
 // 영업일 규칙: 20시 ~ 다음날 12시(정오)까지를 시작한 날의 영업으로 본다.
 export const DEFAULT_DAY_CUTOFF_HOUR = 12;
@@ -78,20 +79,34 @@ export function normalizeSettings(raw) {
       const r = rooms.find((x) => isObject(x) && x.id === id);
       return { id, name: str(r?.name) || d.rooms[i].name, hourlyRate: nonNegInt(r?.hourlyRate, 0) };
     }),
-    items: (Array.isArray(raw.items) ? raw.items : [])
-      .filter((i) => isObject(i) && str(i.id) && str(i.name))
-      .map((i) => ({
-        id: i.id,
-        name: i.name,
-        category: ITEM_CATEGORIES.includes(i.category) ? i.category : 'service',
-        price: nonNegInt(i.price, 0),
-        active: i.active !== false,
-      })),
+    items: normalizeItems(raw.items),
     dayCutoffHour: cutoff,
     settingsVersion: SETTINGS_VERSION,
     updatedAt: str(raw.updatedAt) || null,
     updatedBy: str(raw.updatedBy) || null,
   };
+}
+
+// 세트(category 'set')는 고를 개수(pickCount)와 대상 음료(setItemIds, 식음료만)를 함께 가진다.
+function normalizeItems(raw) {
+  const list = (Array.isArray(raw) ? raw : [])
+    .filter((i) => isObject(i) && str(i.id) && str(i.name))
+    .map((i) => ({
+      id: i.id,
+      name: i.name,
+      category: ITEM_CATEGORIES.includes(i.category) ? i.category : 'service',
+      price: nonNegInt(i.price, 0),
+      active: i.active !== false,
+      ...(i.category === 'set'
+        ? {
+          pickCount: Number.isInteger(i.pickCount) && i.pickCount >= 1 ? i.pickCount : DEFAULT_SET_PICK_COUNT,
+          setItemIds: Array.isArray(i.setItemIds) ? i.setItemIds.filter((x) => typeof x === 'string') : [],
+        }
+        : {}),
+    }));
+  const drinks = new Set(list.filter((i) => i.category === 'liquor').map((i) => i.id));
+  for (const i of list) if (i.category === 'set') i.setItemIds = i.setItemIds.filter((x) => drinks.has(x));
+  return list;
 }
 
 function normalizeSession(raw) {
@@ -103,6 +118,10 @@ function normalizeSession(raw) {
     quantities: normalizeCounts(raw.quantities),
     paidHours: nonNegInt(raw.paidHours, 0),
     paidQuantities: normalizeCounts(raw.paidQuantities),
+    // 세트 주문(1건 = 세트 1개, picks = 고른 음료 id). 예전 데이터는 빈 목록.
+    setOrders: (Array.isArray(raw.setOrders) ? raw.setOrders : [])
+      .filter((o) => isObject(o) && str(o.setId) && Array.isArray(o.picks))
+      .map((o) => ({ id: str(o.id) || newId(), setId: o.setId, picks: o.picks.filter((p) => typeof p === 'string'), paid: o.paid === true })),
     // 서비스(무료)로 내준 식음료 수량. 청구하지 않고 룸을 비울 때 comps에 기록한다.
     freeQuantities: normalizeCounts(raw.freeQuantities),
     // 방문 인원·이용안함(이탈) 인원. 예전 데이터는 0으로 채운다.
@@ -215,6 +234,12 @@ export function validateSettings(settings) {
     if (!item.name) errors.push(`${i + 1}번째 품목 이름을 입력해 주세요.`);
     if (!ITEM_CATEGORIES.includes(item.category)) errors.push(`${label}: 분류를 선택해 주세요.`);
     if (!isNonNegInt(item.price)) errors.push(`${label}: 가격은 0 이상의 숫자(원)로 입력해 주세요.`);
+    if (item.category === 'set') {
+      if (!Number.isInteger(item.pickCount) || item.pickCount < 1 || item.pickCount > 10) {
+        errors.push(`${label}: 고를 음료 개수는 1~10 사이 숫자로 입력해 주세요.`);
+      }
+      if (!(item.setItemIds || []).length) errors.push(`${label}: 세트에 넣을 수 있는 음료를 하나 이상 체크해 주세요.`);
+    }
   });
   const h = settings.dayCutoffHour;
   if (!Number.isInteger(h) || h < 0 || h > 23) errors.push('영업일 기준 시각은 0~23 사이 숫자로 입력해 주세요.');

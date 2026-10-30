@@ -35,6 +35,9 @@ import {
   calcRepayment,
   normalizePhone,
   formatPhone,
+  addSetOrder,
+  removeSetOrder,
+  setOrderCounts,
 } from '../js/calc.js';
 
 const room = { id: 'room1', name: '1번 룸', hourlyRate: 30000 };
@@ -260,6 +263,37 @@ test('전화번호 정규화·표시', () => {
   assert.equal(normalizePhone('010-1234 5678'), '01012345678');
   assert.equal(formatPhone('01012345678'), '010-1234-5678');
   assert.equal(formatPhone('0212345678'), '021-234-5678');
+});
+
+test('세트: 세트 가격만 청구, 구성 음료는 나간 수량과 마감 품목에 0원으로 기록', () => {
+  const cola = { id: 'cola', name: '콜라', category: 'liquor', price: 4000, active: true };
+  const cider = { id: 'cider', name: '사이다', category: 'liquor', price: 4000, active: true };
+  const set = { id: 'set3', name: '음료 3종 세트', category: 'set', price: 10000, active: true, pickCount: 3, setItemIds: ['cola', 'cider'] };
+  const all = [cola, cider, set];
+  let s = emptySession();
+  assert.equal(addSetOrder(s, set, ['cola', 'cola'], 'x'), s); // 개수 부족
+  assert.equal(addSetOrder(s, set, ['cola', 'cola', 'beer'], 'x'), s); // 대상이 아닌 음료
+  s = addSetOrder(s, set, ['cola', 'cola', 'cider'], 'o1');
+  s = addSetOrder(s, set, ['cider', 'cider', 'cider'], 'o2');
+  const lines = unpaidLines(s, room, all);
+  assert.deepEqual(lines.map((l) => [l.name, l.subtotal, l.components.join(',')]), [
+    ['음료 3종 세트', 10000, '콜라,콜라,사이다'], ['음료 3종 세트', 10000, '사이다,사이다,사이다'],
+  ]);
+  assert.deepEqual(drinkCounts(s, all), [{ name: '사이다', qty: 4, free: 0 }, { name: '콜라', qty: 2, free: 0 }]);
+  assert.deepEqual(setOrderCounts(s, 'set3'), { qty: 2, paid: 0 });
+
+  // 1건 결제 후 1건 추가 → 결제한 세트는 못 줄이고, 미결제만 뺀다
+  s = markSessionPaid(removeSetOrder(s, 'set3'));
+  s = addSetOrder(s, set, ['cola', 'cider', 'cola'], 'o3');
+  assert.deepEqual(setOrderCounts(s, 'set3'), { qty: 2, paid: 1 });
+  s = removeSetOrder(removeSetOrder(s, 'set3'), 'set3');
+  assert.deepEqual(setOrderCounts(s, 'set3'), { qty: 1, paid: 1 });
+
+  const sum = summarizeDay([{ roomId: 'room1', roomName: '1번 룸', method: 'cash', base: 10000, surcharge: 0, discount: 0, amount: 10000, lines: lines.slice(0, 1) }]);
+  assert.deepEqual(sum.byCategory, { room: 0, liquor: 10000, service: 0 });
+  assert.deepEqual(sum.byItem.map((i) => [i.kind, i.name, i.qty, i.sales]), [
+    ['liquor', '음료 3종 세트', 1, 10000], ['set_part', '콜라', 2, 0], ['set_part', '사이다', 1, 0],
+  ]);
 });
 
 test('서비스 경과 시간(분)', () => {

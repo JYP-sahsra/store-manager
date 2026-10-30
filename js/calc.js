@@ -9,6 +9,7 @@ export const CATEGORY_LABELS = {
   room: '룸 이용',
   liquor: '식음료',
   service: '기타 서비스',
+  set: '세트',
 };
 
 // 시간제 서비스 종료 예정 시각이 이만큼 남으면 '곧 종료'로 강조한다.
@@ -36,6 +37,16 @@ export function unpaidLines(session, room, items, now = new Date()) {
   for (const item of items) {
     const qty = (session.quantities[item.id] || 0) - (session.paidQuantities[item.id] || 0);
     if (qty > 0) lines.push(makeLine(item.category, item.id, item.name, item.price, qty));
+  }
+  // 세트 1건 = 세트 가격 1줄(매출 분류는 식음료). 구성 음료는 청구하지 않고 이름만 붙인다.
+  for (const o of session.setOrders || []) {
+    const set = items.find((i) => i.id === o.setId);
+    if (o.paid || !set) continue;
+    lines.push({
+      ...makeLine('liquor', set.id, set.name, set.price, 1),
+      setOrderId: o.id,
+      components: o.picks.map((id) => items.find((i) => i.id === id)?.name || '삭제된 품목'),
+    });
   }
   for (const svc of session.services || []) {
     const item = items.find((i) => i.id === svc.itemId);
@@ -250,15 +261,41 @@ export function markSessionPaid(session, now = new Date()) {
       const hours = s.hours + overtimeHours(s, now);
       return { ...s, hours, paidHours: hours };
     }),
+    setOrders: (session.setOrders || []).map((o) => ({ ...o, paid: true })),
   };
 }
 
+// ── 세트 상품 ──
+// 세트 = settings.items 중 category 'set'(price, pickCount, setItemIds). 1건마다 대상 음료 pickCount개를 고른다(같은 음료 중복 가능).
+
+export function addSetOrder(session, set, picks, id) {
+  if (picks.length !== set.pickCount || picks.some((p) => !set.setItemIds.includes(p))) return session;
+  return { ...session, setOrders: [...(session.setOrders || []), { id, setId: set.id, picks: [...picks], paid: false }] };
+}
+
+// 결제하지 않은 마지막 세트 1건을 뺀다(결제한 세트는 줄일 수 없음).
+export function removeSetOrder(session, setId) {
+  const orders = session.setOrders || [];
+  const idx = orders.map((o) => !o.paid && o.setId === setId).lastIndexOf(true);
+  if (idx < 0) return session;
+  return { ...session, setOrders: orders.filter((_, i) => i !== idx) };
+}
+
+export function setOrderCounts(session, setId) {
+  const list = (session.setOrders || []).filter((o) => o.setId === setId);
+  return { qty: list.length, paid: list.filter((o) => o.paid).length };
+}
+
 // 식음료 품목별로 지금까지 나간 수량(결제 여부와 무관, 수량 많은 순). free = 서비스(무료)로 나간 수량
+// 세트로 나간 구성 음료도 qty에 더한다.
 export function drinkCounts(session, items) {
   const free = session.freeQuantities || {};
+  const fromSets = {};
+  for (const o of session.setOrders || []) for (const id of o.picks) fromSets[id] = (fromSets[id] || 0) + 1;
+  const qty = (i) => (session.quantities[i.id] || 0) + (fromSets[i.id] || 0);
   return items
-    .filter((i) => i.category === 'liquor' && ((session.quantities[i.id] || 0) > 0 || (free[i.id] || 0) > 0))
-    .map((i) => ({ name: i.name, qty: session.quantities[i.id] || 0, free: free[i.id] || 0 }))
+    .filter((i) => i.category === 'liquor' && (qty(i) > 0 || (free[i.id] || 0) > 0))
+    .map((i) => ({ name: i.name, qty: qty(i), free: free[i.id] || 0 }))
     .sort((a, b) => b.qty + b.free - (a.qty + a.free));
 }
 
@@ -355,6 +392,12 @@ export function summarizeDay(payments) {
       const item = items.get(key);
       item.qty += line.qty;
       item.sales += line.subtotal;
+      // 세트 구성 음료는 매출 0원으로 나간 수량만 기록한다.
+      for (const part of line.components || []) {
+        const pk = `set_part|${part}`;
+        if (!items.has(pk)) items.set(pk, { kind: 'set_part', name: part, unitPrice: 0, qty: 0, sales: 0 });
+        items.get(pk).qty += 1;
+      }
     }
   }
   summary.byRoom = [...rooms.values()].sort((a, b) => a.roomId.localeCompare(b.roomId));

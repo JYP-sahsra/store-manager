@@ -29,6 +29,9 @@ import {
   overtimeHours,
   drinkCounts,
   splitBill,
+  addSetOrder,
+  removeSetOrder,
+  setOrderCounts,
   changeFreeCount,
   freeItems,
   CATEGORY_LABELS,
@@ -64,7 +67,8 @@ const ui = {
   // 매출 캘린더: data = { source: 'server' | 'local', list }, selected = 펼친 날짜
   calendar: { month: monthOf(new Date()), data: null, loading: false, selected: null },
   // 접고 펴는 영역의 펼침 상태(다시 그려도 유지). 기본 정보는 PIN이 없을 때만 처음부터 펼친다.
-  folds: { basic: !state.pin, rooms: false, items: false, calc: false },
+  folds: { basic: !state.pin, rooms: false, items: false, sets: false, calc: false },
+  setPicker: null, // 세트 음료 고르기 창: { setId, counts: { itemId: n } }
   salesView: 'close', // 매출 탭 항목: close(일 마감) / month(월 매출) / credit(외상 관리)
   // 간이 계산기(매출에 기록하지 않음): 품목별 수량, 결제수단, 더치페이 인원
   calc: { counts: {}, method: 'cash', people: 1 },
@@ -181,7 +185,8 @@ function render() {
     <nav class="tabbar" aria-label="메뉴">
       ${TABS.map((t) => `<button data-action="tab" data-tab="${t.id}" ${ui.tab === t.id ? 'aria-current="page"' : ''}>${t.label}</button>`).join('')}
     </nav>
-    ${ui.payment ? paymentSheet() : ''}`;
+    ${ui.payment ? paymentSheet() : ''}
+    ${ui.setPicker ? setPickerSheet() : ''}`;
 }
 
 function roomsView() {
@@ -217,6 +222,7 @@ function calculatorSection() {
   return `<details class="card fold calc" data-fold="calc" ${ui.folds.calc ? 'open' : ''}>
     <summary><h3>간이 계산기</h3><span class="muted">${count ? `${count}개 · ${won(pay.amount)}` : '매출에 기록되지 않는 계산용'}</span></summary>
     ${group('liquor')}
+    ${group('set')}
     ${group('service')}
     <div class="segmented big calc-method" role="radiogroup" aria-label="계산기 결제수단">
       <button role="radio" aria-checked="${c.method === 'cash'}" data-action="calc-method" data-method="cash">현금<small>판매액 그대로</small></button>
@@ -313,6 +319,53 @@ function counterRow({ label, sub, key, qty, paid }) {
 }
 
 // 셀프 주문형 메뉴 카드. 담긴 수량이 있으면 강조하고, 결제한 수량 아래로는 줄일 수 없다.
+// 세트 카드: + 는 음료 고르기 창을 열고, − 는 결제하지 않은 마지막 세트를 뺀다.
+function setCard(set, s) {
+  const { qty, paid } = setOrderCounts(s, set.id);
+  const recent = (s.setOrders || []).filter((o) => o.setId === set.id).slice(-2)
+    .map((o) => o.picks.map((id) => state.settings.items.find((i) => i.id === id)?.name || '?').join('·'));
+  return `<div class="menu-card set-card ${qty ? 'picked' : ''}">
+    <div class="menu-name">${esc(set.name)} <span class="set-tag">세트</span></div>
+    <div class="menu-price">${won(set.price)} · 음료 ${set.pickCount}개 선택${paid ? ` · 결제 ${paid}` : ''}</div>
+    <div class="counter">
+      <button class="step" data-action="set-dec" data-set="${esc(set.id)}" ${qty <= paid ? 'disabled' : ''} aria-label="${esc(set.name)} 빼기">−</button>
+      <span class="qty">${qty}</span>
+      <button class="step" data-action="set-open" data-set="${esc(set.id)}" aria-label="${esc(set.name)} 담기(음료 고르기)">+</button>
+    </div>
+    ${recent.length ? `<div class="set-recent">${recent.map((r) => esc(r)).join('<br>')}</div>` : ''}
+  </div>`;
+}
+
+// 세트 음료 고르기 창: 대상 음료를 −/+ 로 정한 개수만큼 고른다(같은 음료 중복 가능).
+function setPickerSheet() {
+  const p = ui.setPicker;
+  const set = state.settings.items.find((i) => i.id === p.setId);
+  const total = Object.values(p.counts).reduce((a, n) => a + n, 0);
+  const drinks = set.setItemIds.map((id) => state.settings.items.find((i) => i.id === id)).filter(Boolean);
+  return `<div class="sheet-backdrop">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="set-title">
+      <div class="sheet-grip" aria-hidden="true"></div>
+      <h2 id="set-title">${esc(set.name)}</h2>
+      <p class="muted">${won(set.price)} · 음료 ${set.pickCount}개를 골라 주세요 <b class="${total === set.pickCount ? 'ok-text' : ''}">(${total}/${set.pickCount})</b></p>
+      ${drinks.map((dr) => {
+        const n = p.counts[dr.id] || 0;
+        return `<div class="calc-row ${n ? 'picked' : ''}">
+          <div class="counter-label"><span>${esc(dr.name)}</span></div>
+          <div class="counter">
+            <button class="step" data-action="set-pick" data-item="${esc(dr.id)}" data-delta="-1" ${n ? '' : 'disabled'} aria-label="${esc(dr.name)} 빼기">−</button>
+            <span class="qty">${n}</span>
+            <button class="step" data-action="set-pick" data-item="${esc(dr.id)}" data-delta="1" ${total >= set.pickCount ? 'disabled' : ''} aria-label="${esc(dr.name)} 고르기">+</button>
+          </div>
+        </div>`;
+      }).join('')}
+      <div class="actions">
+        <button class="btn" data-action="set-cancel">취소</button>
+        <button class="btn primary" data-action="set-confirm" ${total === set.pickCount ? '' : 'disabled'}>세트 담기</button>
+      </div>
+    </div>
+  </div>`;
+}
+
 // 식음료 카드에는 서비스(무료) 수량 줄을 함께 둔다(청구하지 않고 기록만).
 function menuCard(item, s) {
   const qty = s.quantities[item.id] || 0;
@@ -409,8 +462,10 @@ function roomDetailView(roomId) {
   const s = state.sessions[roomId];
   const items = state.settings.items.filter((i) => i.active || (s.quantities[i.id] || 0) > 0);
   const cats = ['liquor', 'service'].filter(
-    (c) => items.some((i) => i.category === c) || (c === 'service' && (s.services || []).length),
+    (c) => items.some((i) => i.category === c || (c === 'liquor' && i.category === 'set'))
+      || (c === 'service' && (s.services || []).length),
   );
+  const sets = state.settings.items.filter((i) => i.category === 'set' && (i.active || setOrderCounts(s, i.id).qty));
   if (!cats.includes(ui.category)) ui.category = cats[0] || 'liquor';
   const unpaid = unpaidLines(s, room, state.settings.items);
   const balance = sumLines(unpaid);
@@ -435,7 +490,7 @@ function roomDetailView(roomId) {
       </div>
       ${ui.category === 'service'
         ? serviceSection(s)
-        : `<div class="menu-grid">${items.filter((i) => i.category === 'liquor').map((i) => menuCard(i, s)).join('')}</div>`}`
+        : `<div class="menu-grid">${sets.map((x) => setCard(x, s)).join('')}${items.filter((i) => i.category === 'liquor').map((i) => menuCard(i, s)).join('')}</div>`}`
     : '<p class="empty">판매 중인 품목이 없습니다. 관리 탭에서 추가해 주세요.</p>'}
     <div class="order-bar">
       <div class="order-sum">
@@ -535,7 +590,7 @@ function paymentSheet() {
 function linesTable(lines) {
   return `<table class="lines"><tbody>
     ${lines.map((l) => `<tr>
-      <td>${esc(l.name)}${l.startedAt ? ` <small class="muted">${fmtTime(l.startedAt)}~</small>` : ''}${l.overtimeHours ? ` <small class="ot">초과 ${l.overtimeHours}시간 포함</small>` : ''}</td>
+      <td>${esc(l.name)}${l.startedAt ? ` <small class="muted">${fmtTime(l.startedAt)}~</small>` : ''}${l.overtimeHours ? ` <small class="ot">초과 ${l.overtimeHours}시간 포함</small>` : ''}${l.components ? `<br><small class="muted">${l.components.map(esc).join(' · ')}</small>` : ''}</td>
       <td class="num">${won(l.unitPrice)} × ${l.qty}${l.kind === 'room' || l.serviceId ? '시간' : ''}</td>
       <td class="num">${won(l.subtotal)}</td></tr>`).join('')}
   </tbody></table>`;
@@ -597,7 +652,7 @@ function closeBreakdown(r) {
       ? `<dl class="sum">${r.by_room.map((x) => `<div><dt>${esc(x.roomName)} (${x.count}건)</dt><dd>${won(x.net)}</dd></div>`).join('')}</dl>`
       : '<p class="muted">없음</p>'}
     ${sold.length ? `<details><summary>품목별 판매</summary>
-      <table class="lines"><tbody>${sold.map((x) => `<tr><td>${esc(x.name)}</td><td class="num">${x.qty}</td><td class="num">${won(x.sales)}</td></tr>`).join('')}</tbody></table>
+      <table class="lines"><tbody>${sold.map((x) => `<tr><td>${esc(x.name)}${x.kind === 'set_part' ? ' <small class="muted">(세트 구성)</small>' : ''}</td><td class="num">${x.qty}</td><td class="num">${x.kind === 'set_part' ? '-' : won(x.sales)}</td></tr>`).join('')}</tbody></table>
     </details>` : ''}
     ${comps.length ? `<h4>서비스 제공 (무료, 매출 아님)</h4>
       <table class="lines"><tbody>${comps.map((x) => `<tr><td>${esc(x.name)}</td><td class="num">${x.qty}</td><td class="num muted">정가 ${won(x.value)}</td></tr>`).join('')}</tbody></table>
@@ -799,8 +854,33 @@ function startDraft() {
     pin: state.pin,
     dayCutoffHour: String(state.settings.dayCutoffHour),
     rooms: state.settings.rooms.map((r) => ({ ...r, hourlyRate: String(r.hourlyRate) })),
-    items: state.settings.items.map((i) => ({ ...i, price: String(i.price) })),
+    items: state.settings.items.map((i) => ({
+      ...i,
+      price: String(i.price),
+      ...(i.category === 'set' ? { pickCount: String(i.pickCount), setItemIds: [...i.setItemIds] } : {}),
+    })),
   };
+}
+
+// 세트 상품 설정: 이름·가격·고를 개수·대상 음료(식음료 체크). 판매 품목과 같은 items 목록에 category 'set'으로 저장한다.
+function setsFold(d, input) {
+  const drinks = d.items.filter((i) => i.category === 'liquor' && i.name.trim());
+  const sets = d.items.map((it, i) => ({ it, i })).filter(({ it }) => it.category === 'set');
+  return `<details class="card fold" data-fold="sets" ${ui.folds.sets ? 'open' : ''}>
+    <summary><h3>세트 상품</h3><span class="muted">${sets.length ? sets.map(({ it }) => `${esc(it.name || '이름 없음')} ${won(parseWon(it.price))}`).join(' · ') : '없음'}</span></summary>
+    <p class="muted">세트를 담을 때 대상 음료 중에서 정한 개수를 고릅니다(같은 음료 여러 개 가능). 세트 가격만 청구하고 고른 음료는 나간 수량으로 기록합니다.</p>
+    ${sets.map(({ it, i }) => `<div class="item-edit set-edit">
+      <label class="field grow"><span>세트 이름</span>${input(`items.${i}.name`, it.name, 'autocomplete="off"')}</label>
+      <label class="field"><span>세트 가격(원)</span>${input(`items.${i}.price`, it.price, 'inputmode="numeric"')}</label>
+      <label class="field"><span>고를 음료 개수</span>${input(`items.${i}.pickCount`, it.pickCount, 'inputmode="numeric"')}</label>
+      <div class="set-targets grow"><span class="muted">대상 음료</span>
+        ${drinks.length ? drinks.map((dr) => `<label class="check"><input type="checkbox" data-input="set-target" data-index="${i}" data-item="${esc(dr.id)}" ${it.setItemIds.includes(dr.id) ? 'checked' : ''}> ${esc(dr.name)}</label>`).join('') : '<span class="muted">먼저 판매 품목에 식음료를 추가해 주세요.</span>'}
+      </div>
+      <label class="check"><input type="checkbox" data-input="draft" data-path="items.${i}.active" ${it.active ? 'checked' : ''}> 판매 중</label>
+      <button class="btn small danger" data-action="delete-item" data-index="${i}">삭제</button>
+    </div>`).join('')}
+    <button class="btn block" data-action="add-set">+ 세트 추가</button>
+  </details>`;
 }
 
 function settingsView() {
@@ -830,8 +910,8 @@ function settingsView() {
     <details class="card fold" data-fold="items" ${ui.folds.items ? 'open' : ''}>
       <summary><h3>판매 품목</h3><span class="muted">식음료 ${d.items.filter((i) => i.category === 'liquor').length}개 · 기타 서비스 ${d.items.filter((i) => i.category === 'service').length}개</span></summary>
       <p class="muted">식음료는 수량으로 세고, 기타 서비스는 1명·1시간 가격을 입력합니다(시간제).</p>
-      ${d.items.length ? '' : '<p class="muted">품목이 없습니다.</p>'}
-      ${d.items.map((it, i) => `<div class="item-edit">
+      ${d.items.some((i) => i.category !== 'set') ? '' : '<p class="muted">품목이 없습니다.</p>'}
+      ${d.items.map((it, i) => (it.category === 'set' ? '' : `<div class="item-edit">
         <label class="field grow"><span>이름</span>${input(`items.${i}.name`, it.name, 'autocomplete="off"')}</label>
         <label class="field"><span>분류</span>
           <select data-input="draft" data-path="items.${i}.category">
@@ -841,9 +921,10 @@ function settingsView() {
         <label class="field"><span>가격(원)</span>${input(`items.${i}.price`, it.price, 'inputmode="numeric"')}</label>
         <label class="check"><input type="checkbox" data-input="draft" data-path="items.${i}.active" ${it.active ? 'checked' : ''}> 판매 중</label>
         <button class="btn small danger" data-action="delete-item" data-index="${i}">삭제</button>
-      </div>`).join('')}
+      </div>`)).join('')}
       <button class="btn block" data-action="add-item">+ 품목 추가</button>
     </details>
+    ${setsFold(d, input)}
     <p class="muted">${esc(server)}${s.updatedAt ? `<br>마지막 변경 ${fmtDateTime(s.updatedAt)}${s.updatedBy ? ` · ${esc(s.updatedBy)}` : ''}` : ''}</p>
     <div class="actions">
       <button class="btn" data-action="reset-draft">되돌리기</button>
@@ -1079,10 +1160,38 @@ const actions = {
     const inputs = app.querySelectorAll('.item-edit input[data-path$=".name"]');
     inputs[inputs.length - 1]?.focus();
   },
+  'set-open': (el) => {
+    ui.setPicker = { setId: el.dataset.set, counts: {} };
+    navPush();
+    render();
+  },
+  'set-pick': (el) => {
+    const c = ui.setPicker.counts;
+    c[el.dataset.item] = Math.max(0, (c[el.dataset.item] || 0) + Number(el.dataset.delta));
+    render();
+  },
+  'set-cancel': () => {
+    ui.setPicker = null;
+    render();
+  },
+  'set-confirm': () => {
+    const set = state.settings.items.find((i) => i.id === ui.setPicker.setId);
+    const picks = Object.entries(ui.setPicker.counts).flatMap(([id, n]) => Array(n).fill(id));
+    ui.setPicker = null;
+    updateSession((s) => addSetOrder(s, set, picks, newId()));
+  },
+  'set-dec': (el) => updateSession((s) => removeSetOrder(s, el.dataset.set)),
+  'add-set': () => {
+    ui.draft.items.push({ id: newId(), name: '', category: 'set', price: '', active: true, pickCount: '3', setItemIds: [] });
+    render();
+    const inputs = app.querySelectorAll('.set-edit input[data-path$=".name"]');
+    inputs[inputs.length - 1]?.focus();
+  },
   'delete-item': (el) => {
     const item = ui.draft.items[Number(el.dataset.index)];
     const inUse = Object.values(state.sessions).some(
-      (s) => s && ((s.quantities[item.id] || 0) > 0 || (s.services || []).some((v) => v.itemId === item.id)),
+      (s) => s && ((s.quantities[item.id] || 0) > 0 || (s.services || []).some((v) => v.itemId === item.id)
+        || (s.setOrders || []).some((o) => o.setId === item.id || o.picks.includes(item.id))),
     );
     if (inUse) {
       alert(`이용 중인 룸에서 "${item.name}"을(를) 판매 중이라 삭제할 수 없습니다.\n대신 '판매 중'을 끄면 새로 추가되지 않습니다.`);
@@ -1365,6 +1474,13 @@ async function saveSettingsDraft() {
       category: i.category,
       price: parseWon(i.price, Number.NaN),
       active: i.active,
+      ...(i.category === 'set'
+        ? {
+          pickCount: parseWon(i.pickCount, Number.NaN),
+          // 그사이 삭제됐거나 식음료가 아니게 된 품목은 대상에서 뺀다.
+          setItemIds: i.setItemIds.filter((id) => d.items.some((x) => x.id === id && x.category === 'liquor')),
+        }
+        : {}),
     })),
     dayCutoffHour: parseWon(d.dayCutoffHour, Number.NaN),
     settingsVersion: SETTINGS_VERSION,
@@ -1495,6 +1611,11 @@ function onInput(e) {
     if (sum) sum.innerHTML = repaySummary();
   } else if (el.dataset.input === 'draft') {
     setDraft(el.dataset.path, el.type === 'checkbox' ? el.checked : el.value);
+  } else if (el.dataset.input === 'set-target') {
+    const set = ui.draft.items[Number(el.dataset.index)];
+    set.setItemIds = el.checked
+      ? [...new Set([...set.setItemIds, el.dataset.item])]
+      : set.setItemIds.filter((id) => id !== el.dataset.item);
   }
 }
 app.addEventListener('input', onInput);
@@ -1530,7 +1651,8 @@ function navPush() {
 }
 
 function goBackInApp() {
-  if (ui.payment) ui.payment = null;
+  if (ui.setPicker) ui.setPicker = null;
+  else if (ui.payment) ui.payment = null;
   else if (ui.tab === 'sales' && ui.credit.detail) ui.credit.detail = null;
   else if (ui.tab === 'rooms' && ui.roomId) ui.roomId = null;
   else if (ui.tab !== 'rooms') ui.tab = 'rooms';
@@ -1577,7 +1699,7 @@ app.addEventListener(
 );
 
 // 경과 시간 표시를 갱신한다. 입력 중이거나 결제 화면이 열려 있으면 건너뛴다.
-const isEditing = () => Boolean(ui.payment || document.activeElement?.matches('input, select'));
+const isEditing = () => Boolean(ui.payment || ui.setPicker || document.activeElement?.matches('input, select'));
 setInterval(() => {
   if (ui.tab === 'rooms' && !isEditing()) render();
 }, 30000);

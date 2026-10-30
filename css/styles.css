@@ -251,6 +251,13 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .credit-entries .repay b { color: var(--ok); }
 .repay-form { border-top: 2px solid var(--line); margin-top: 8px; }
 
+.set-tag { font-size: .7rem; font-weight: 800; color: #fff; background: var(--accent); border-radius: 6px; padding: 1px 6px; vertical-align: middle; }
+.set-card { background: var(--accent-soft); }
+.set-recent { margin-top: 6px; font-size: .75rem; color: var(--muted); line-height: 1.4; }
+.set-targets { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 4px 0 8px; }
+.set-targets > .muted { width: 100%; font-size: .85rem; }
+.ok-text { color: var(--ok); }
+
 .calc { margin-top: 16px; }
 .calc h4 { margin: 12px 0 2px; }
 .calc-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
