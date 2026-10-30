@@ -38,6 +38,7 @@
 - 매출 탭은 `ui.salesView`(close/month/credit) 항목 탭으로 나눈다: `dayCloseView`(요약·일 마감·결제 내역) / `calendarSection` / `creditSection`. 항목을 처음 열 때 `loadSalesViewData`가 캘린더·외상 명단을 서버에서 받는다.
 - 뒤로가기: 화면을 한 단계 깊이 들어갈 때(룸 화면·결제 창·외상 내역·룸 외 탭) `navPush()`로 히스토리를 쌓고, `popstate`에서 `goBackInApp()`으로 한 단계 되돌린다. 룸 목록(맨 위)에서는 '앱을 닫을까요?'를 묻는다. 아니오 → 히스토리 한 칸을 다시 채움. 예 → `history.go(-(navDepth+1))`로 앱 기록을 건너뛰고, 이동이 안 되면(이전 페이지 없음) `window.close()` 시도 후 `allowExit`로 다음 뒤로가기를 막지 않음(화면을 누르면 보호 재설정).
 - 세트 상품: `settings.items`의 category 'set'(`price`, `pickCount`, `setItemIds` = 식음료 id). 세션 `setOrders[{id, setId, picks[itemId], paid}]` 1건 = 세트 1개. `unpaidLines`에 kind 'liquor'(매출 분류 식음료) 1줄 + `components`(구성 이름). 결제 시 `markSessionPaid`가 paid 표시. `drinkCounts`에 구성 음료 포함, `summarizeDay` byItem에 kind 'set_part'(sales 0)로 구성 수량 기록. 서버 스키마 변경 없음(설정 data jsonb).
+- 정식 운영 전환(2026-11-01): 폰은 관리 탭 [시범 데이터 초기화] → `resetPilotData`(매출 데이터만 비움, 설정·PIN 유지, `pilotResetAt` 기록). 서버는 `supabase/reset_pilot_2026-11-01.sql`(영업일 11/1 이전 day_closes·credit_entries, 내역 없는 credit_accounts 삭제, 사용자가 직접 실행).
 - 간이 계산기: `ui.calc`(화면 상태만, 저장·매출 기록 없음). 금액은 `calcPayment(판매액, 수단, 0)`, 더치페이는 `splitBill`(1인 100원 단위 올림, 차액 extra).
 - 접기 영역 펼침 상태는 `ui.folds`(basic/rooms/items/calc)에 두고 toggle 이벤트(capture)로 갱신한다.
 - 룸 이용안함: 기타 서비스가 하나라도 있으면 불가(버튼 숨김 + 동작에서도 차단). [이용안함 · 룸 비우기] 버튼으로 확인 후 세션을 비운다. 미결제 주문은 취소, 이미 받은 결제는 매출에 남는다. 이용안함 건수는 따로 기록하지 않는다.

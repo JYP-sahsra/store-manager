@@ -13,6 +13,7 @@ import {
   mergeServerSettings,
   addCloseHistory,
   newId,
+  resetPilotData,
 } from '../js/storage.js';
 
 function memoryStorage(initial = {}) {
@@ -151,6 +152,26 @@ test('마감 기록 보관은 결제 상세를 빼고 같은 id는 덮어쓴다'
   let h = addCloseHistory([], { id: 'a', net_total: 1, payments: [{}] });
   h = addCloseHistory(h, { id: 'a', net_total: 2, payments: [] });
   assert.deepEqual(h, [{ id: 'a', net_total: 2 }]);
+});
+
+test('시범 데이터 초기화: 매출 데이터만 비우고 설정·PIN·관리자 이름은 유지', () => {
+  const state = defaultState();
+  state.pin = 'secret';
+  state.managerName = '관리자A';
+  state.settings.items.push({ id: 'beer', name: '맥주', category: 'liquor', price: 8000, active: true });
+  state.sessions.room1 = { id: 's', startedAt: 'x', hours: 1, quantities: {}, paidHours: 0, paidQuantities: {} };
+  state.payments = [{ id: 'p' }];
+  state.comps = [{ id: 'c' }];
+  state.pendingUploads = [{ id: 'u' }];
+  state.pendingCredits = [{ id: 'k' }];
+  state.closeHistory = [{ id: 'h' }];
+  const oldDay = state.businessDay.id;
+  const r = resetPilotData(state, new Date('2026-11-01T03:00:00Z'));
+  assert.deepEqual([r.pin, r.managerName, r.settings.items.length], ['secret', '관리자A', 1]);
+  assert.deepEqual([r.payments, r.comps, r.pendingUploads, r.pendingCredits, r.closeHistory], [[], [], [], [], []]);
+  assert.deepEqual(Object.values(r.sessions), [null, null, null]);
+  assert.notEqual(r.businessDay.id, oldDay);
+  assert.equal(r.pilotResetAt, '2026-11-01T03:00:00.000Z');
 });
 
 test('newId는 UUID 형식', () => {

@@ -48,6 +48,7 @@ export function defaultState() {
     payments: [],
     pendingUploads: [],
     closeHistory: [],
+    pilotResetAt: null,
     pendingCredits: [], // 서버에 아직 못 보낸 외상 발생 기록(이름·전화번호 포함, 보내면 지운다)
     comps: [], // 이번 영업일 서비스(무료) 제공 기록 [{id, roomId, roomName, sessionId, at, items[{itemId, name, qty, listPrice}]}]
   };
@@ -165,6 +166,7 @@ export function normalizeState(raw) {
     pendingUploads: raw.pendingUploads ?? [],
     comps: raw.comps ?? [],
     pendingCredits: raw.pendingCredits ?? [],
+    pilotResetAt: str(raw.pilotResetAt) || null, // 시범 데이터를 초기화한 시각(없으면 아직 안 함)
     closeHistory: (raw.closeHistory ?? []).slice(0, CLOSE_HISTORY_LIMIT),
   };
 }
@@ -196,6 +198,22 @@ export function loadState(storage) {
 
 export function saveState(state, storage) {
   storage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+// 시범 운영 데이터 초기화: 매출 관련 데이터(룸·결제·서비스 제공·마감 보관·미전송 마감/외상)만 비우고
+// 설정(품목·세트·룸 요금)·PIN·관리자 이름은 그대로 둔다.
+export function resetPilotData(state, now = new Date()) {
+  return {
+    ...state,
+    businessDay: { id: newId(), openedAt: null },
+    sessions: Object.fromEntries(ROOM_IDS.map((id) => [id, null])),
+    payments: [],
+    comps: [],
+    pendingUploads: [],
+    pendingCredits: [],
+    closeHistory: [],
+    pilotResetAt: now.toISOString(),
+  };
 }
 
 export function addCloseHistory(history, record) {

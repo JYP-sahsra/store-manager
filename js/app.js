@@ -50,6 +50,7 @@ import {
   validateSettings,
   mergeServerSettings,
   addCloseHistory,
+  resetPilotData,
   SETTINGS_VERSION,
 } from './storage.js';
 import * as api from './api.js';
@@ -978,6 +979,13 @@ function settingsView() {
         <label class="btn file-btn">백업 가져오기<input type="file" accept="application/json,.json" data-input="import"></label>
       </div>
     </section>
+    <section class="card danger-card">
+      <h3>시범 데이터 초기화</h3>
+      <p class="muted">정식 운영을 시작하기 전에 이 휴대폰의 매출 데이터(진행 중인 룸·결제 내역·서비스 제공·보관 중인 마감/외상)를 지웁니다.
+        품목·세트·룸 요금·매장 정보·PIN은 그대로 남습니다. 서버 데이터는 README의 "정식 운영 전환" SQL로 따로 정리합니다.</p>
+      ${state.pilotResetAt ? `<p class="ok-text">이 휴대폰은 ${fmtDateTime(state.pilotResetAt)}에 초기화했습니다.</p>` : ''}
+      <button class="btn block danger" data-action="reset-pilot">시범 데이터 초기화</button>
+    </section>
     <p class="muted center">앱 버전 ${esc(ui.appVersion || '확인 중')}</p>`;
 }
 
@@ -1252,6 +1260,24 @@ const actions = {
     if (!confirm(`"${item.name || '이름 없는 품목'}"을(를) 삭제할까요? (설정 저장을 눌러야 반영됩니다)`)) return;
     ui.draft.items.splice(Number(el.dataset.index), 1);
     render();
+  },
+  'reset-pilot': () => {
+    const active = activeRooms().length;
+    const msg = [
+      '이 휴대폰의 시범 매출 데이터를 모두 지웁니다.',
+      `· 결제 내역 ${state.payments.length}건, 진행 중인 룸 ${active}개`,
+      `· 서버에 못 보낸 마감 ${state.pendingUploads.length}건 · 외상 ${state.pendingCredits.length}건`,
+      '품목·세트·룸 요금·매장 정보·PIN은 그대로 남습니다.',
+      '되돌릴 수 없습니다. 계속할까요?',
+    ].join('\n');
+    if (!confirm(msg)) return;
+    state = resetPilotData(state);
+    ui.roomId = null;
+    ui.payment = null;
+    ui.calendar.data = null;
+    ui.credit = { ...ui.credit, accounts: null, detail: null };
+    ui.notice = '시범 데이터를 초기화했습니다. 이제부터 기록되는 매출이 실제 매출입니다.';
+    commit();
   },
   'reset-draft': () => {
     ui.draft = null;

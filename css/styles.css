@@ -262,6 +262,9 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 @keyframes just-added { 0%, 40% { background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent); } 100% { background: transparent; box-shadow: none; } }
 @media (prefers-reduced-motion: reduce) { .just-added { animation: none; outline: 2px solid var(--accent); } }
 
+.danger-card { border-color: var(--danger); }
+.danger-card h3 { color: var(--danger); }
+
 .guest-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
 .guest-pick { min-height: 64px; font-size: 1.3rem; }
 .time-note { font-size: .8rem; margin: 0 0 4px; }
