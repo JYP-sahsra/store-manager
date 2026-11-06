@@ -1,6 +1,7 @@
 // 휴대폰(localStorage) 저장, 기본값, 데이터 검증, 백업 파일 처리.
 // 데이터 구조는 CLAUDE.md의 "데이터 계약"과 맞춰 유지한다.
 import { businessDate } from './calc.js';
+import { DEFAULT_CASH_TARGET } from './ledger.js';
 
 export const STORAGE_KEY = 'storeManager.v1';
 export const STATE_VERSION = 1;
@@ -30,6 +31,7 @@ export function defaultSettings() {
     rooms: ROOM_IDS.map((id, i) => ({ id, name: `${i + 1}번 룸`, hourlyRate: 0 })),
     items: [],
     dayCutoffHour: DEFAULT_DAY_CUTOFF_HOUR,
+    cashTarget: DEFAULT_CASH_TARGET, // 장부: 금고에 유지할 시재금(원)
     settingsVersion: SETTINGS_VERSION,
     updatedAt: null,
     updatedBy: null,
@@ -83,6 +85,7 @@ export function normalizeSettings(raw) {
     }),
     items: normalizeItems(raw.items),
     dayCutoffHour: cutoff,
+    cashTarget: nonNegInt(raw.cashTarget, DEFAULT_CASH_TARGET),
     settingsVersion: SETTINGS_VERSION,
     updatedAt: str(raw.updatedAt) || null,
     updatedBy: str(raw.updatedBy) || null,
@@ -287,6 +290,7 @@ export function validateSettings(settings) {
   });
   const h = settings.dayCutoffHour;
   if (!Number.isInteger(h) || h < 0 || h > 23) errors.push('영업일 기준 시각은 0~23 사이 숫자로 입력해 주세요.');
+  if (!isNonNegInt(settings.cashTarget)) errors.push('유지할 시재금은 0 이상의 숫자(원)로 입력해 주세요.');
   return errors;
 }
 

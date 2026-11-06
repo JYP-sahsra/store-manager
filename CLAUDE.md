@@ -8,6 +8,7 @@
 - `js/calc.js` — 금액 계산 순수 함수(화면·저장 코드 금지). 계산 규칙을 바꾸면 `tests/calc.test.js`도 함께 바꾼다.
 - `js/storage.js` — localStorage 저장, 기본값, 데이터 정규화·검증, 백업 파일.
 - `js/calendar.js` — 매출 월 캘린더 계산 순수 함수(월 범위, 달력 칸, 날짜별 합계, 만원 표기). `tests/calendar.test.js`.
+- `js/ledger.js` — 장부(현금출납) 계산 순수 함수(`incomeByDate`, `dayFlow`, `cashBook`, `shiftDate`). `tests/ledger.test.js`.
 - `js/api.js` — Supabase RPC 호출(fetch). 테이블 직접 접근 금지, `supabase/schema.sql`의 함수만 사용.
 - `js/app.js` — 화면 렌더링(문자열 템플릿 + 이벤트 위임). 사용자 입력 문자열은 `esc()`로 출력한다.
 - `js/config.js` — Supabase URL과 publishable(anon) key만. service_role key 금지.
@@ -35,7 +36,8 @@
 - 서비스(무료) 제공: 세션 `freeQuantities`(청구 안 함, `unpaidLines`에 들어가지 않음). 룸을 비울 때(`closeSession`: 종료·결제 후 종료·이용안함) `freeItems`를 `state.comps`에 기록하고, 일 마감 시 `buildCloseRecord({comps})`가 `by_item`에 kind 'comp'(sales 0, value = 정가 × 수량)로 넣는다. 금액 합계(net_total 등)는 변하지 않는다. 서버 스키마 변경 없음(by_item jsonb).
 - 외상: 결제 시 외상분을 판매액에서 먼저 뺀다(현금 기준, 카드 가산 없음, 할인은 받는 부분에만) — `calcPaymentWithCredit`. 결제 기록 `base` = 판매액 − 외상(그날 매출), `coveredBase` = 판매액, `credit`, `creditEntryId`(이름·전화번호는 결제 기록에 넣지 않음). 매출은 갚은 날: 상환은 `type: 'repay'` 결제 기록(roomId null, lines [], base = 장부 차감액, 카드면 surcharge 10%). 마감 `by_category`에 `credit_issued`, `credit_repaid`(gross_sales = room+liquor+service − issued + repaid).
 - 외상 장부 서버: `supabase/credit.sql`(credit_accounts 전화번호 unique, credit_entries issue/repay, RPC list/get/add/delete, 상환 잔액 초과·잔액 남은 삭제를 서버에서 거부). 외상 발생은 `pendingCredits`에 먼저 넣고 `uploadCredits`로 전송(재전송 안전: entry id), 상환은 서버 기록 성공 후에만 매출 반영.
-- 매출 탭은 `ui.salesView`(close/month/credit) 항목 탭으로 나눈다: `dayCloseView`(요약·일 마감·결제 내역) / `calendarSection` / `creditSection`. 항목을 처음 열 때 `loadSalesViewData`가 캘린더·외상 명단을 서버에서 받는다.
+- 매출 탭은 `ui.salesView`(close/month/credit/ledger) 항목 탭으로 나눈다: `dayCloseView`(요약·일 마감·결제 내역) / `calendarSection` / `creditSection` / `ledgerSection`. 항목을 처음 열 때 `loadSalesViewData`가 캘린더·외상 명단·장부를 서버에서 받는다.
+- 장부(`supabase/ledger.sql`, 서버 전용·오프라인 보관 없음): 수입은 저장하지 않고 일 마감 기록(`cash_total`/`card_total`, 받은 금액) + 미전송 마감(`pendingUploads`) + 마감 전 이번 영업일 결제(`summarizeDay`)에서 계산. `ledger_entries` kind = expense(method cash/card/transfer) / cash_out(시재 회수) / cash_in(시재 보충) / set(시재 맞춤 = 그 영업일 시작 전 금고 현금). 시재 = 대상일 이하 가장 최근 set(같은 날 여러 건이면 나중 created_at) + 그 날부터 전날까지 날짜별 `cashNet`(현금 수입 − 현금 지출 − 회수 + 보충). 조회 범위는 대상일 −35일, `last_set_date`가 더 이르면 그 날부터. 유지 시재 목표는 `settings.cashTarget`(기본 `DEFAULT_CASH_TARGET` 300,000). 마감 업로드·동기화·시범 초기화 때 `ui.ledger.data`를 비운다.
 - 뒤로가기: 화면을 한 단계 깊이 들어갈 때(룸 화면·결제 창·외상 내역·룸 외 탭) `navPush()`로 히스토리를 쌓고, `popstate`에서 `goBackInApp()`으로 한 단계 되돌린다. 룸 목록(맨 위)에서는 '앱을 닫을까요?'를 묻는다. 아니오 → 히스토리 한 칸을 다시 채움. 예 → `history.go(-(navDepth+1))`로 앱 기록을 건너뛰고, 이동이 안 되면(이전 페이지 없음) `window.close()` 시도 후 `allowExit`로 다음 뒤로가기를 막지 않음(화면을 누르면 보호 재설정).
 - 세트 상품: `settings.items`의 category 'set'(`price`, `pickCount`, `setItemIds` = 식음료 id). 세션 `setOrders[{id, setId, picks[itemId], paid}]` 1건 = 세트 1개. `unpaidLines`에 kind 'liquor'(매출 분류 식음료) 1줄 + `components`(구성 이름). 결제 시 `markSessionPaid`가 paid 표시. `drinkCounts`에 구성 음료 포함, `summarizeDay` byItem에 kind 'set_part'(sales 0)로 구성 수량 기록. 서버 스키마 변경 없음(설정 data jsonb).
 - 정식 운영 전환(`OFFICIAL_START_DATE` = 2026-11-01): 폰은 관리 탭 [시범 데이터 초기화] → `resetPilotData`(영업일 11/1 이전 데이터만 삭제: 열린 영업일이 시범이면 룸·결제·서비스 제공, 그리고 business_date < 11/1인 closeHistory·pendingUploads·pendingCredits. 설정·PIN 유지, `pilotResetAt` 기록). 서버는 `supabase/reset_pilot_2026-11-01.sql`(영업일 11/1 이전 day_closes·credit_entries, 내역 없는 credit_accounts 삭제, 사용자가 11/1 이후 직접 실행). 둘 다 11/1 이후 실행해도 실제 매출은 보존된다.
@@ -53,7 +55,8 @@
 ## 데이터 계약
 
 - localStorage 키 `storeManager.v1`, `version: 1`. 구조를 바꾸면 version을 올리고 `normalizeState`에 변환 코드를 추가한다.
-- 설정(`settings`)은 `settingsVersion`(현재 2)을 가진다. v1(필드 없음)의 `dayCutoffHour: 0`은 12로 옮긴다(`normalizeSettings`). 서버 `store_settings.data`도 같은 형식.
+- 설정(`settings`)은 `settingsVersion`(현재 2)을 가진다. v1(필드 없음)의 `dayCutoffHour: 0`은 12로 옮긴다(`normalizeSettings`). `cashTarget`(유지 시재금, 없으면 300,000)도 설정에 둔다. 서버 `store_settings.data`도 같은 형식.
+- 장부 항목(`ledger_entries`, 서버): `{id(uuid, 폰 생성·같은 id 저장 = 수정), business_date, kind, description, amount(≥0 정수), method(expense만), created_by, created_at, updated_by, updated_at}` — RPC `list_ledger(pin, from, to)` → `{entries, last_set_date}`, `save_ledger_entry(pin, entry{…, by})`, `delete_ledger_entry(pin, id)`.
 - 미전송 외상(`pendingCredits[]`): `{id, kind:'issue', phone(숫자), name, amount, occurred_at, business_date, room_name, entered_at, room_hours, service_hours, created_by}` — 서버 전송 후 삭제.
 - 영업일 서비스 제공 기록(`comps[]`): `id, roomId, roomName, sessionId, at, items[{itemId, name, qty, listPrice}]` — 마감 때 비운다.
 - 세션(`sessions.roomN`): `id, startedAt, hours, quantities, paidHours, paidQuantities, freeQuantities, setOrders, guests, declined, services[{id, itemId, startedAt, hours, paidHours}]` (`services`가 없던 예전 데이터는 빈 목록으로 정규화)

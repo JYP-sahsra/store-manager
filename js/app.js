@@ -57,6 +57,7 @@ import {
 } from './storage.js';
 import * as api from './api.js';
 import { monthOf, shiftMonth, monthRange, calendarCells, closesByDate, compactWon } from './calendar.js';
+import { LEDGER_KINDS, EXPENSE_METHODS, shiftDate, incomeByDate, cashBook } from './ledger.js';
 
 const app = document.getElementById('app');
 const loaded = loadState(localStorage);
@@ -80,6 +81,8 @@ const ui = {
   calc: { counts: {}, method: 'cash', people: 1 },
   // 외상 장부: accounts = 서버 명단(null이면 아직 안 불러옴), detail = 선택한 사람의 하위 내역
   credit: { accounts: null, loading: false, error: '', query: '', detail: null, repayText: '', repayMethod: 'cash' },
+  // 장부: date = 보고 있는 영업일(null이면 이번 영업일), data = 서버에서 받은 장부·마감, form = 추가/수정 중인 항목
+  ledger: { date: null, data: null, loading: false, error: '', form: null },
   appVersion: '', // 실행 중인 앱 버전(service worker 캐시 이름)
   updateReady: false, // 새 버전이 준비됐지만 입력 중이라 적용을 미뤘다
   busy: false,
@@ -696,10 +699,11 @@ const SALES_VIEWS = [
   { id: 'close', label: '일 마감' },
   { id: 'month', label: '월 매출' },
   { id: 'credit', label: '외상 관리' },
+  { id: 'ledger', label: '장부' },
 ];
 
 function salesView() {
-  const view = { close: dayCloseView, month: calendarSection, credit: creditSection }[ui.salesView];
+  const view = { close: dayCloseView, month: calendarSection, credit: creditSection, ledger: ledgerSection }[ui.salesView];
   return `<div class="sub-tabs" role="tablist" aria-label="매출 항목">
       ${SALES_VIEWS.map((v) => `<button role="tab" aria-selected="${ui.salesView === v.id}" data-action="sales-view" data-view="${v.id}">
         ${v.label}${v.id === 'credit' && state.pendingCredits.length ? ' <i class="dot warn-dot" aria-label="미전송 있음"></i>' : ''}</button>`).join('')}
@@ -879,12 +883,200 @@ function calendarSection() {
   </section>`;
 }
 
+// ── 장부(현금출납) ──
+// 수입 = 일 마감 기록(현금·카드 받은 금액) + 아직 마감 전인 이번 영업일 결제. 지출·시재 입출금은 서버 ledger_entries.
+// 시재 = 가장 최근 '시재 맞춤'(그날 영업 시작 전 금고 현금) + 그 뒤 날짜별 (현금 수입 − 현금 지출 − 회수 + 보충).
+const ledgerDate = () => ui.ledger.date || currentBusinessDate();
+const fmtDay = (date) => {
+  const [y, m, d] = date.split('-').map(Number);
+  return `${m}월 ${d}일 (${WEEKDAYS[new Date(y, m - 1, d).getDay()]})`;
+};
+
+function ledgerBook() {
+  const { data } = ui.ledger;
+  const date = ledgerDate();
+  // 마감 전 이번 영업일 결제도 수입으로 넣는다(마감하면 일 마감 기록으로 대체).
+  const live = date === currentBusinessDate() && state.payments.length
+    ? (() => { const s = summarizeDay(state.payments); return { date, cash: s.cashTotal, card: s.cardTotal }; })()
+    : null;
+  const income = incomeByDate(data.closes, live);
+  return { book: cashBook(data.entries, income, date), live: Boolean(live), dayEntries: data.entries.filter((e) => e.business_date === date) };
+}
+
+function ledgerSection() {
+  const L = ui.ledger;
+  const date = ledgerDate();
+  const today = currentBusinessDate();
+  const head = `<div class="cal-head">
+      <button class="icon-btn cal-nav" data-action="ledger-day" data-delta="-1" aria-label="전날">‹</button>
+      <h3>${fmtDay(date)} 장부</h3>
+      <button class="icon-btn cal-nav" data-action="ledger-day" data-delta="1" aria-label="다음 날" ${date >= today ? 'disabled' : ''}>›</button>
+    </div>
+    ${date !== today ? '<button class="link center-link" data-action="ledger-today">이번 영업일로</button>' : ''}`;
+  if (!L.data) {
+    return `<section class="card">${head}
+      <p class="muted">${L.loading ? '장부를 불러오는 중…' : esc(L.error || '장부를 불러오려면 [동기화]를 누르세요.')}</p></section>`;
+  }
+  const { book, live, dayEntries } = ledgerBook();
+  const f = book.flow;
+  const expenses = dayEntries.filter((e) => e.kind === 'expense');
+  const moves = dayEntries.filter((e) => e.kind !== 'expense');
+  const target = state.settings.cashTarget;
+  const row = (e) => `<button class="ledger-row" data-action="ledger-edit" data-id="${esc(e.id)}">
+      <span class="who"><b>${esc(e.description || LEDGER_KINDS[e.kind])}</b><small>${e.kind === 'expense' ? EXPENSE_METHODS[e.method] || '' : LEDGER_KINDS[e.kind]}${e.updated_by ? ` · ${esc(e.updated_by)}` : ''}</small></span>
+      <b class="bal">${e.kind === 'expense' || e.kind === 'cash_out' ? '−' : e.kind === 'cash_in' ? '+' : ''}${won(e.amount)}</b>
+    </button>`;
+  const form = L.form ? ledgerForm() : '';
+  let cash;
+  if (!book.hasStart) {
+    cash = `<p class="warn">시재 기준이 없습니다. 금고 현금을 세어 [시재 맞춤]으로 이 날 영업 시작 전 금액을 기록해 주세요.</p>`;
+  } else {
+    const diff = book.end - target;
+    cash = `<dl class="sum">
+      <div><dt>시작 시재${book.setDate === date ? ' (맞춤)' : ''}</dt><dd>${won(book.start)}</dd></div>
+      <div><dt>+ 현금 수입</dt><dd>${won(f.cashIncome)}</dd></div>
+      <div><dt>− 현금 지출</dt><dd>${won(f.cashExpense)}</dd></div>
+      ${f.cashOut ? `<div><dt>− 시재 회수</dt><dd>${won(f.cashOut)}</dd></div>` : ''}
+      ${f.cashIn ? `<div><dt>+ 시재 보충</dt><dd>${won(f.cashIn)}</dd></div>` : ''}
+      <div class="grand"><dt>마감 시재</dt><dd>${won(book.end)}</dd></div>
+      <div><dt>유지 시재 ${won(target)} 대비</dt><dd class="${diff ? 'warn-text' : 'ok-text'}">${diff > 0 ? `${won(diff)} 많음` : diff < 0 ? `${won(-diff)} 부족` : '맞음'}</dd></div>
+    </dl>
+    ${diff > 0 ? `<button class="btn small" data-action="ledger-new" data-kind="cash_out" data-amount="${diff}">초과분 ${won(diff)} 회수 기록</button>` : ''}
+    ${diff < 0 ? `<button class="btn small" data-action="ledger-new" data-kind="cash_in" data-amount="${-diff}">부족분 ${won(-diff)} 보충 기록</button>` : ''}`;
+  }
+  return `<section class="card">${head}
+      <dl class="sum">
+        <div><dt>수입 (현금 ${won(f.cashIncome)} · 카드 ${won(f.cardIncome)})</dt><dd>${won(f.incomeTotal)}</dd></div>
+        <div><dt>지출</dt><dd>−${won(f.expenseTotal)}</dd></div>
+        <div class="grand"><dt>수입 − 지출</dt><dd>${won(f.profit)}</dd></div>
+      </dl>
+      <p class="muted">수입은 받은 금액(현금·카드) 기준입니다.${live ? ' 아직 마감 전이라 지금까지의 결제를 포함했습니다.' : ''} 외상 발생분은 받을 때 수입으로 잡힙니다.</p>
+    </section>
+    <section class="card">
+      <div class="row-between"><h3>지출</h3><span class="muted">현금 ${won(f.cashExpense)} · 카드 ${won(f.cardExpense)} · 이체 ${won(f.transferExpense)}</span></div>
+      ${expenses.length ? expenses.map(row).join('') : '<p class="muted">지출 기록이 없습니다.</p>'}
+      ${L.form?.kind === 'expense' ? form : `<button class="btn block" data-action="ledger-new" data-kind="expense">+ 지출 추가</button>`}
+    </section>
+    <section class="card">
+      <h3>현금 시재</h3>
+      ${cash}
+      ${moves.length ? `<h4>시재 입출금</h4>${moves.map(row).join('')}` : ''}
+      ${L.form && L.form.kind !== 'expense' ? form : `<div class="btn-row">
+        <button class="btn small" data-action="ledger-new" data-kind="cash_out">시재 회수</button>
+        <button class="btn small" data-action="ledger-new" data-kind="cash_in">시재 보충</button>
+        <button class="btn small" data-action="ledger-new" data-kind="set">시재 맞춤</button>
+      </div>`}
+      <p class="muted">시재 회수: 금고에서 꺼낸 현금(사장님 전달·은행 입금 등) · 시재 보충: 금고에 넣은 현금 · 시재 맞춤: 이 날 영업 시작 전 금고 현금을 세어 기준으로 삼습니다.</p>
+    </section>
+    <button class="btn small block" data-action="ledger-reload" ${L.loading ? 'disabled' : ''}>${L.loading ? '불러오는 중…' : '장부 새로고침'}</button>`;
+}
+
+function ledgerForm() {
+  const F = ui.ledger.form;
+  const isExpense = F.kind === 'expense';
+  return `<div class="ledger-form">
+    <h4>${LEDGER_KINDS[F.kind]} ${F.isNew ? '추가' : '수정'}</h4>
+    <label class="field"><span>${isExpense ? '내용' : '메모 (선택)'}</span>
+      <input data-input="ledger-desc" autocomplete="off" value="${esc(F.description)}" placeholder="${isExpense ? '예: 얼음, 휴지' : ''}"></label>
+    <label class="field"><span>${F.kind === 'set' ? '금고 현금 (원, 영업 시작 전)' : '금액 (원)'}</span>
+      <input data-input="ledger-amount" inputmode="numeric" autocomplete="off" value="${esc(F.amountText)}" placeholder="0"></label>
+    ${isExpense ? `<div class="segmented" role="radiogroup" aria-label="지출 수단">
+      ${Object.entries(EXPENSE_METHODS).map(([k, v]) => `<button role="radio" aria-checked="${F.method === k}" data-action="ledger-method" data-method="${k}">${v}</button>`).join('')}
+    </div>` : ''}
+    <div class="btn-row">
+      <button class="btn primary" data-action="ledger-save" ${ui.busy ? 'disabled' : ''}>저장</button>
+      <button class="btn" data-action="ledger-cancel">취소</button>
+      ${F.isNew ? '' : `<button class="btn danger" data-action="ledger-delete" ${ui.busy ? 'disabled' : ''}>삭제</button>`}
+    </div>
+  </div>`;
+}
+
+// 대상 영업일의 장부와 수입(마감 기록)을 받는다. 최근 35일 + 그보다 앞선 시재 맞춤이 있으면 그 날부터.
+async function loadLedger() {
+  const L = ui.ledger;
+  if (!api.isServerConfigured() || !state.pin) {
+    L.error = '장부는 서버와 매장 PIN이 있어야 볼 수 있습니다(관리 탭 기본 정보).';
+    render();
+    return;
+  }
+  const date = ledgerDate();
+  L.loading = true;
+  render();
+  try {
+    let from = shiftDate(date, -35);
+    let r = await api.listLedger(state.pin, from, date);
+    if (r.last_set_date && r.last_set_date < from) {
+      from = r.last_set_date;
+      r = await api.listLedger(state.pin, from, date);
+    }
+    const c = await api.listDayCloses(state.pin, from, date);
+    // 서버에 아직 못 올린 마감도 수입에 넣는다(같은 id는 한 번만).
+    const ids = new Set(c.closes.map((x) => x.id));
+    const pending = state.pendingUploads.filter((p) => !ids.has(p.id) && p.business_date >= from && p.business_date <= date);
+    if (ledgerDate() !== date) return; // 불러오는 사이 다른 날로 옮겼다
+    L.data = { entries: r.entries, closes: [...c.closes, ...pending] };
+    L.error = '';
+  } catch (e) {
+    L.data = null;
+    L.error = `장부를 불러오지 못했습니다: ${e.message}`;
+  }
+  L.loading = false;
+  render();
+}
+
+function openLedgerForm(kind, entry = null, amount = '') {
+  ui.ledger.form = entry
+    ? { id: entry.id, kind: entry.kind, description: entry.description || '', amountText: String(entry.amount), method: entry.method || 'cash', isNew: false }
+    : { id: newId(), kind, description: '', amountText: amount || (kind === 'set' ? String(state.settings.cashTarget) : ''), method: 'cash', isNew: true };
+  navPush();
+  render();
+  document.querySelector('.ledger-form')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+async function saveLedgerForm() {
+  const F = ui.ledger.form;
+  const amount = parseWon(F.amountText, Number.NaN);
+  if (F.kind === 'expense' && !F.description.trim()) return alert('지출 내용을 입력해 주세요.');
+  if (!Number.isInteger(amount) || amount < 0 || (F.kind !== 'set' && amount === 0)) return alert('금액을 숫자(원)로 입력해 주세요.');
+  ui.busy = true;
+  render();
+  try {
+    await api.saveLedgerEntry(state.pin, {
+      id: F.id, business_date: ledgerDate(), kind: F.kind, description: F.description.trim(), amount,
+      method: F.kind === 'expense' ? F.method : null, by: state.managerName || null,
+    });
+    ui.ledger.form = null;
+    ui.notice = `${LEDGER_KINDS[F.kind]} ${won(amount)}을 장부에 ${F.isNew ? '기록' : '수정'}했습니다.`;
+  } catch (e) {
+    ui.notice = `장부에 저장하지 못했습니다: ${e.message}`;
+  }
+  ui.busy = false;
+  await loadLedger();
+}
+
+async function deleteLedgerForm() {
+  const F = ui.ledger.form;
+  if (!confirm(`이 ${LEDGER_KINDS[F.kind]} 기록(${won(parseWon(F.amountText))})을 삭제할까요?`)) return;
+  ui.busy = true;
+  render();
+  try {
+    await api.deleteLedgerEntry(state.pin, F.id);
+    ui.ledger.form = null;
+    ui.notice = '장부 기록을 삭제했습니다.';
+  } catch (e) {
+    ui.notice = `삭제하지 못했습니다: ${e.message}`;
+  }
+  ui.busy = false;
+  await loadLedger();
+}
+
 function startDraft() {
   return {
     storeName: state.settings.storeName,
     managerName: state.managerName,
     pin: state.pin,
     dayCutoffHour: String(state.settings.dayCutoffHour),
+    cashTarget: String(state.settings.cashTarget),
     rooms: state.settings.rooms.map((r) => ({ ...r, hourlyRate: String(r.hourlyRate) })),
     items: state.settings.items.map((i) => ({
       ...i,
@@ -942,6 +1134,7 @@ function settingsView() {
       <label class="field"><span>관리자 이름 (마감·설정 변경 기록용)</span>${input('managerName', d.managerName, 'autocomplete="off"')}</label>
       <label class="field"><span>매장 PIN (서버 저장용)</span>${input('pin', d.pin, 'type="password" autocomplete="off"')}</label>
       <label class="field"><span>영업일 기준 시각 (0~23시, 이 시각 이전에 시작한 영업은 전날 매출. 기본 12)</span>${input('dayCutoffHour', d.dayCutoffHour, 'inputmode="numeric"')}</label>
+      <label class="field"><span>유지할 시재금(원, 장부 금고 현금 기준. 기본 300,000)</span>${input('cashTarget', d.cashTarget, 'inputmode="numeric"')}</label>
     </details>
     <details class="card fold" data-fold="rooms" ${ui.folds.rooms ? 'open' : ''}>
       <summary><h3>룸 요금</h3><span class="muted">${d.rooms.map((r) => `${esc(r.name)} ${won(parseWon(r.hourlyRate))}`).join(' · ')}</span></summary>
@@ -1277,6 +1470,7 @@ const actions = {
     ui.roomId = null;
     ui.payment = null;
     ui.calendar.data = null;
+    ui.ledger.data = null;
     ui.credit = { ...ui.credit, accounts: null, detail: null };
     ui.notice = `영업일 ${OFFICIAL_START_DATE} 이전 시범 데이터를 지웠습니다. 정식 운영 데이터는 그대로입니다.`;
     commit();
@@ -1285,6 +1479,33 @@ const actions = {
     ui.draft = null;
     render();
   },
+  'ledger-day': (el) => {
+    ui.ledger.date = shiftDate(ledgerDate(), Number(el.dataset.delta));
+    if (ui.ledger.date >= currentBusinessDate()) ui.ledger.date = null;
+    ui.ledger.form = null;
+    loadLedger();
+  },
+  'ledger-today': () => {
+    ui.ledger.date = null;
+    ui.ledger.form = null;
+    loadLedger();
+  },
+  'ledger-reload': () => loadLedger(),
+  'ledger-new': (el) => openLedgerForm(el.dataset.kind, null, el.dataset.amount || ''),
+  'ledger-edit': (el) => {
+    const entry = ui.ledger.data?.entries.find((e) => e.id === el.dataset.id);
+    if (entry) openLedgerForm(entry.kind, entry);
+  },
+  'ledger-method': (el) => {
+    ui.ledger.form.method = el.dataset.method;
+    render();
+  },
+  'ledger-cancel': () => {
+    ui.ledger.form = null;
+    render();
+  },
+  'ledger-save': () => saveLedgerForm(),
+  'ledger-delete': () => deleteLedgerForm(),
   'save-settings': saveSettingsDraft,
   'export-backup': () => {
     downloadFile(`store-backup-${currentBusinessDate()}.json`, exportBackup(state));
@@ -1295,6 +1516,7 @@ const actions = {
 function loadSalesViewData() {
   if (ui.salesView === 'month' && !ui.calendar.data && !ui.calendar.loading) loadMonth(ui.calendar.month);
   if (ui.salesView === 'credit' && !ui.credit.accounts && !ui.credit.loading) loadCreditAccounts();
+  if (ui.salesView === 'ledger' && !ui.ledger.data && !ui.ledger.loading) loadLedger();
 }
 
 function newPaymentUi(roomId, endAfter) {
@@ -1501,6 +1723,7 @@ async function uploadPending() {
     }
   }
   state.pendingUploads = state.pendingUploads.filter((p) => !done.includes(p.id));
+  ui.ledger.data = null; // 마감 기록이 바뀌었으니 장부 수입을 다시 받는다
   ui.busy = false;
   if (error) {
     ui.notice = `마감 업로드 실패: ${error} (휴대폰에 보관 중이며 매출 탭에서 다시 올릴 수 있습니다)`;
@@ -1563,6 +1786,7 @@ async function saveSettingsDraft() {
         : {}),
     })),
     dayCutoffHour: parseWon(d.dayCutoffHour, Number.NaN),
+    cashTarget: parseWon(d.cashTarget, Number.NaN),
     settingsVersion: SETTINGS_VERSION,
   };
   const errors = validateSettings(next);
@@ -1689,6 +1913,10 @@ function onInput(e) {
     ui.credit.repayText = el.value;
     const sum = document.getElementById('repay-summary');
     if (sum) sum.innerHTML = repaySummary();
+  } else if (el.dataset.input === 'ledger-desc') {
+    ui.ledger.form.description = el.value;
+  } else if (el.dataset.input === 'ledger-amount') {
+    ui.ledger.form.amountText = el.value;
   } else if (el.dataset.input === 'draft') {
     setDraft(el.dataset.path, el.type === 'checkbox' ? el.checked : el.value);
   } else if (el.dataset.input === 'set-target') {
@@ -1735,6 +1963,7 @@ function goBackInApp() {
   else if (ui.setPicker) ui.setPicker = null;
   else if (ui.payment) ui.payment = null;
   else if (ui.tab === 'sales' && ui.credit.detail) ui.credit.detail = null;
+  else if (ui.tab === 'sales' && ui.ledger.form) ui.ledger.form = null;
   else if (ui.tab === 'rooms' && ui.roomId) ui.roomId = null;
   else if (ui.tab !== 'rooms') ui.tab = 'rooms';
   else return false;
@@ -1832,9 +2061,12 @@ async function syncAll() {
   ui.credit.accounts = null;
   ui.credit.detail = null;
   ui.calendar.data = null;
+  ui.ledger.data = null;
+  ui.ledger.form = null;
   if (ui.tab === 'sales') {
     if (ui.salesView === 'month') await loadMonth(ui.calendar.month);
     if (ui.salesView === 'credit') await loadCreditAccounts();
+    if (ui.salesView === 'ledger') await loadLedger();
   }
   if (ui.notice === '동기화 중…') {
     notify(`동기화했습니다. 최신 앱(${ui.appVersion || '버전 확인 불가'})과 서버 데이터를 사용 중입니다.`);

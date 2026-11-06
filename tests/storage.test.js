@@ -194,3 +194,13 @@ test('시범 데이터 초기화는 영업일 11/1 이전 데이터만 지운다
 test('newId는 UUID 형식', () => {
   assert.match(newId(), /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 });
+
+test('유지 시재금(cashTarget): 없으면 기본 300,000, 잘못된 값은 검증 오류', async () => {
+  const { normalizeSettings, validateSettings } = await import('../js/storage.js');
+  assert.equal(normalizeSettings({}).cashTarget, 300000);
+  assert.equal(normalizeSettings({ cashTarget: 250000 }).cashTarget, 250000);
+  assert.equal(normalizeSettings({ cashTarget: -1 }).cashTarget, 300000);
+  const s = normalizeSettings({});
+  assert.deepEqual(validateSettings(s), []);
+  assert.ok(validateSettings({ ...s, cashTarget: Number.NaN }).some((e) => e.includes('시재금')));
+});

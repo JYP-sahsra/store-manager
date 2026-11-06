@@ -257,6 +257,21 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 .set-targets { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 4px 0 8px; }
 .set-targets > .muted { width: 100%; font-size: .85rem; }
 .ok-text { color: var(--ok); }
+.warn-text { color: var(--danger); }
+
+/* 장부 */
+.ledger-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; text-align: left;
+  padding: 10px 0; border: 0; border-top: 1px solid var(--line); background: none; color: inherit; cursor: pointer;
+}
+.ledger-row .who { display: flex; flex-direction: column; min-width: 0; }
+.ledger-row .who b { overflow-wrap: anywhere; }
+.ledger-row small { color: var(--muted); }
+.ledger-form { border-top: 2px solid var(--line); margin-top: 8px; padding-top: 4px; }
+.ledger-form .segmented { grid-template-columns: repeat(3, 1fr); }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.btn-row .btn { flex: 1; }
+.center-link { display: block; margin: -4px auto 4px; }
 
 .just-added { animation: just-added 1.6s ease-out; border-radius: 10px; }
 @keyframes just-added { 0%, 40% { background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent); } 100% { background: transparent; box-shadow: none; } }
@@ -285,12 +300,12 @@ h4 { margin: 14px 0 4px; font-size: .9rem; color: var(--muted); }
 /* 매출 탭 위쪽 항목 탭 */
 .sub-tabs {
   position: sticky; top: calc(57px + env(safe-area-inset-top)); z-index: 4;
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
   margin: -4px 0 12px; padding: 4px; border-radius: 14px; background: var(--line);
 }
 .sub-tabs button {
-  min-height: 44px; border: 0; border-radius: 11px; background: transparent; color: var(--muted);
-  font-weight: 800; cursor: pointer;
+  min-height: 44px; padding: 0 2px; border: 0; border-radius: 11px; background: transparent; color: var(--muted);
+  font-weight: 800; font-size: .9rem; white-space: nowrap; cursor: pointer;
 }
 .sub-tabs button[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 4px rgb(0 0 0 / .12); }
 .warn-dot { background: var(--danger); vertical-align: middle; }

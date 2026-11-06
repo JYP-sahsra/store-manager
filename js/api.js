@@ -11,10 +11,12 @@ const ERROR_MESSAGES = {
   over_balance: '상환 금액이 외상 잔액보다 큽니다. 명단을 새로 불러와 잔액을 확인해 주세요.',
   not_found: '외상 명단을 찾을 수 없습니다. 이미 삭제됐을 수 있습니다.',
   balance_remaining: '잔액이 남아 있어 삭제할 수 없습니다. 전부 상환한 뒤 삭제해 주세요.',
+  invalid_ledger: '장부 항목이 올바르지 않습니다. 금액과 지출 수단을 확인해 주세요.',
 };
 
-// 외상 장부 함수가 없으면(supabase/credit.sql 미실행) PostgREST가 404를 돌려준다.
+// 외상·장부 함수가 없으면(supabase/credit.sql·ledger.sql 미실행) PostgREST가 404를 돌려준다.
 const MISSING_FUNCTION = '외상 장부 서버 설정이 아직 없습니다. README의 "외상 장부 설정"대로 supabase/credit.sql을 실행해 주세요.';
+const MISSING_LEDGER = '장부 서버 설정이 아직 없습니다. README의 "장부 설정"대로 supabase/ledger.sql을 실행해 주세요.';
 
 export function isServerConfigured() {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
@@ -38,6 +40,7 @@ async function rpc(name, args) {
   }
   const body = await res.json().catch(() => null);
   if (res.status === 404 && name.includes('credit')) throw new Error(MISSING_FUNCTION);
+  if (res.status === 404 && name.includes('ledger')) throw new Error(MISSING_LEDGER);
   if (!res.ok) throw new Error(`서버 오류(${res.status}): ${body?.message || '응답을 읽을 수 없습니다'}`);
   if (body?.ok === false) throw new Error(ERROR_MESSAGES[body.error] || `서버가 요청을 거부했습니다: ${body.error}`);
   return body;
@@ -60,3 +63,10 @@ export const addCreditEntry = (pin, entry) => rpc('add_credit_entry', { p_pin: p
 
 export const deleteCreditAccount = (pin, accountId) =>
   rpc('delete_credit_account', { p_pin: pin, p_account_id: accountId });
+
+// 장부(supabase/ledger.sql)
+export const listLedger = (pin, from, to) => rpc('list_ledger', { p_pin: pin, p_from: from, p_to: to });
+
+export const saveLedgerEntry = (pin, entry) => rpc('save_ledger_entry', { p_pin: pin, p_entry: entry });
+
+export const deleteLedgerEntry = (pin, id) => rpc('delete_ledger_entry', { p_pin: pin, p_id: id });
